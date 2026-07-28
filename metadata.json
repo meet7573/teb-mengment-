@@ -1,0 +1,6 @@
+{
+  "name": "Student Tablet Management & Digital Attendance System",
+  "description": "Comprehensive Student Tablet Management & Digital Attendance System featuring QR/Barcode tracking, strict 7-tablet box constraints, digital attendance register, role-based permissions, analytics dashboard, and export capabilities.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
