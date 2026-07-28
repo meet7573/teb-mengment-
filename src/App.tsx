@@ -31,7 +31,6 @@ import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, Us
 function MainApp() {
   // Current Authenticated User state
   const [currentUser, setCurrentUserState] = useState<AppUser | null>(getCurrentUser);
-  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(!currentUser);
 
   // Active Role state
   const [activeRole, setActiveRole] = useState<UserRole>(() => currentUser?.role || getStoredRole());
@@ -89,14 +88,12 @@ function MainApp() {
     setCurrentUserState(user);
     setActiveRole(user.role);
     saveStoredRole(user.role);
-    setIsLoginOpen(false);
   };
 
   const handleConfirmLogout = () => {
     logoutUser();
     setCurrentUserState(null);
     setIsLogoutOpen(false);
-    setIsLoginOpen(true);
   };
 
   // Data Save Handlers
@@ -149,6 +146,15 @@ function MainApp() {
     setPreselectedStudent(null);
     setActiveTab('assignments');
   };
+
+  if (!currentUser) {
+    return (
+      <LoginModal
+        isOpen={true}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex">
@@ -282,12 +288,6 @@ function MainApp() {
       <ThemeSettingsModal
         isOpen={isThemeModalOpen}
         onClose={() => setIsThemeModalOpen(false)}
-      />
-
-      {/* Login Modal */}
-      <LoginModal
-        isOpen={isLoginOpen}
-        onLoginSuccess={handleLoginSuccess}
       />
 
       {/* Logout Confirmation Modal */}

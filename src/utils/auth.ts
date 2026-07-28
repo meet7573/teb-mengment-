@@ -71,4 +71,5 @@ export function setCurrentUser(user: AppUser | null): void {
 
 export function logoutUser(): void {
   localStorage.removeItem(CURRENT_USER_KEY);
+  localStorage.removeItem('token');
 }
