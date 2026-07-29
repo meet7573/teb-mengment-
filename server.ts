@@ -12,7 +12,7 @@ import fs from 'fs';
 
 dotenv.config();
 
-const currentDir = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+const currentDir = process.cwd();
 
 const app = express();
 app.use(express.json());
@@ -358,7 +358,7 @@ async function startServer() {
     });
   }
 
-  const PORT = process.env.PORT || 3000;
+  const PORT = 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
