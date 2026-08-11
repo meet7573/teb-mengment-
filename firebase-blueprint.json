@@ -1,0 +1,176 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System users",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string", "maxLength": 100 },
+        "username": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 150 },
+        "mobileNumber": { "type": "string", "maxLength": 20 },
+        "role": { "type": "string", "enum": ["Super Admin", "Admin", "Teacher", "Operator"] },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "createdAt": { "type": "string" },
+        "avatarUrl": { "type": "string" }
+      },
+      "required": ["fullName", "email", "role", "status", "createdAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student master data",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "pinNumber": { "type": "string", "maxLength": 20 },
+        "standard": { "type": "string", "enum": ["Std 8", "Std 9", "Std 10", "Std 11", "Std 12"] },
+        "isCoachingStudent": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "assignedTabletId": { "type": "string", "maxLength": 128 },
+        "assignedTabletNumber": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "pinNumber", "standard", "isCoachingStudent", "status", "createdAt"]
+    },
+    "Tablet": {
+      "title": "Tablet",
+      "description": "Tablet device data",
+      "type": "object",
+      "properties": {
+        "tabletName": { "type": "string", "maxLength": 100 },
+        "tabletNumber": { "type": "string", "maxLength": 50 },
+        "qrCode": { "type": "string", "maxLength": 100 },
+        "barcode": { "type": "string", "maxLength": 100 },
+        "brand": { "type": "string", "maxLength": 50 },
+        "model": { "type": "string", "maxLength": 50 },
+        "entryDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["Available", "Assigned", "Maintenance"] },
+        "boxId": { "type": "string", "maxLength": 128 },
+        "boxNumber": { "type": "string", "maxLength": 50 },
+        "assignedToStudentId": { "type": "string", "maxLength": 128 },
+        "assignedToStudentName": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["tabletName", "tabletNumber", "qrCode", "barcode", "brand", "model", "entryDate", "status"]
+    },
+    "TabletBox": {
+      "title": "Tablet Box",
+      "description": "Physical box containing tablets",
+      "type": "object",
+      "properties": {
+        "boxNumber": { "type": "string", "maxLength": 50 },
+        "boxName": { "type": "string", "maxLength": 100 },
+        "capacity": { "type": "number" },
+        "location": { "type": "string", "maxLength": 150 },
+        "qrCode": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["boxNumber", "boxName", "capacity", "location", "qrCode", "createdAt"]
+    },
+    "TabletAssignment": {
+      "title": "Tablet Assignment",
+      "description": "Record of a tablet assigned to a student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "pinNumber": { "type": "string", "maxLength": 20 },
+        "standard": { "type": "string", "maxLength": 20 },
+        "tabletId": { "type": "string", "maxLength": 128 },
+        "tabletNumber": { "type": "string", "maxLength": 50 },
+        "tabletName": { "type": "string", "maxLength": 100 },
+        "boxId": { "type": "string", "maxLength": 128 },
+        "boxNumber": { "type": "string", "maxLength": 50 },
+        "assignDate": { "type": "string" },
+        "returnDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Returned"] },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "assignedBy": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["studentId", "studentName", "pinNumber", "standard", "tabletId", "tabletNumber", "tabletName", "assignDate", "status", "assignedBy"]
+    },
+    "DailyAttendanceRecord": {
+      "title": "Daily Attendance Record",
+      "description": "Daily attendance for a class or standard",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 20 },
+        "standard": { "type": "string", "maxLength": 20 },
+        "isLocked": { "type": "boolean" },
+        "lockedAt": { "type": "string" },
+        "lockedBy": { "type": "string", "maxLength": 100 },
+        "submittedBy": { "type": "string", "maxLength": 100 },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["date", "isLocked", "submittedBy", "submittedAt"]
+    },
+    "AttendanceDetail": {
+      "title": "Attendance Detail",
+      "description": "Individual student attendance detail in a daily record",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "pinNumber": { "type": "string", "maxLength": 20 },
+        "standard": { "type": "string", "maxLength": 20 },
+        "isCoachingStudent": { "type": "boolean" },
+        "assignedTabletNumber": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["Checked In", "Checked Out", "Present", "Absent", "Leave", "Late"] },
+        "checkInTime": { "type": "string", "maxLength": 50 },
+        "checkOutTime": { "type": "string", "maxLength": 50 },
+        "totalDuration": { "type": "string", "maxLength": 50 },
+        "cancellationExpiry": { "type": "string", "maxLength": 100 },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "markedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["studentId", "studentName", "pinNumber", "standard", "isCoachingStudent", "status", "markedAt"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "System audit log",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "maxLength": 50 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userRole": { "type": "string", "maxLength": 50 },
+        "action": { "type": "string", "maxLength": 100 },
+        "module": { "type": "string", "maxLength": 50 },
+        "details": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["timestamp", "userName", "userRole", "action", "module", "details"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "System users"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Students"
+    },
+    "/tablets/{tabletId}": {
+      "schema": "Tablet",
+      "description": "Tablets"
+    },
+    "/tabletBoxes/{boxId}": {
+      "schema": "TabletBox",
+      "description": "Tablet Boxes"
+    },
+    "/tabletAssignments/{assignmentId}": {
+      "schema": "TabletAssignment",
+      "description": "Tablet Assignments"
+    },
+    "/attendanceRecords/{recordId}": {
+      "schema": "DailyAttendanceRecord",
+      "description": "Daily Attendance"
+    },
+    "/attendanceRecords/{recordId}/details/{detailId}": {
+      "schema": "AttendanceDetail",
+      "description": "Attendance details for a specific record"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit Logs"
+    }
+  }
+}

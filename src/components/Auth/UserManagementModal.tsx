@@ -11,7 +11,8 @@ import {
   Lock,
   UserCheck
 } from 'lucide-react';
-import { AppUser, getUsers, saveUsers } from '../../utils/auth';
+import { AppUser } from '../../utils/auth';
+import { subscribeToCollection, syncCollection } from '../../lib/db';
 import { UserRole } from '../../types';
 
 interface UserManagementModalProps {
@@ -25,7 +26,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   onClose,
   currentUser,
 }) => {
-  const [users, setUsers] = useState<AppUser[]>(getUsers);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  React.useEffect(() => {
+    if (isOpen) {
+      return subscribeToCollection<AppUser>('users', setUsers);
+    }
+  }, [isOpen]);
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
@@ -83,8 +89,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     };
 
     const updated = [newUser, ...users];
-    setUsers(updated);
-    saveUsers(updated);
+    syncCollection('users', users, updated);
 
     setIsAdding(false);
     setFullName('');
@@ -107,8 +112,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       }
       return u;
     });
-    setUsers(updated);
-    saveUsers(updated);
+    syncCollection('users', users, updated);
   };
 
   const handleDeleteUser = (id: string, name: string) => {
@@ -119,8 +123,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     if (!deletingUser) return;
     const { id, name } = deletingUser;
     const updated = users.filter((u) => u.id !== id);
-    setUsers(updated);
-    saveUsers(updated);
+    syncCollection('users', users, updated);
     setToastMsg(`User ${name} removed.`);
     setTimeout(() => setToastMsg(''), 3000);
     setDeletingUser(null);
@@ -172,147 +175,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               />
             </div>
 
-            <button
-              onClick={() => setIsAdding(!isAdding)}
-              className="w-full sm:w-auto px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>{isAdding ? 'Cancel Registration' : 'Register New User'}</span>
-            </button>
+            {/* Add User button removed as users should register via Login page */}
           </div>
 
           {/* Registration Form Dropdown */}
-          {isAdding && (
-            <form onSubmit={handleAddUser} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-              <h4 className="text-xs font-extrabold uppercase text-slate-700 tracking-wider">
-                Create System Account Form
-              </h4>
-
-              {formError && (
-                <div className="p-2.5 rounded-lg bg-rose-50 text-rose-700 text-xs font-semibold border border-rose-200">
-                  {formError}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Full Name</label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="e.g. Ramesh Chandra"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Username</label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="e.g. ramesh_op"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Email Address</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="ramesh@institute.edu"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Mobile Number</label>
-                  <input
-                    type="text"
-                    value={mobileNumber}
-                    onChange={(e) => setMobileNumber(e.target.value)}
-                    placeholder="+91 98765 11111"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Password</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Confirm Password</label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Role</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as UserRole)}
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                  >
-                    <option value="Super Admin">Super Admin</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Teacher">Teacher</option>
-                    <option value="Operator">Operator</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700">Initial Status</label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as 'Active' | 'Inactive')}
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium outline-none focus:border-blue-600"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAdding(false)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer hover:bg-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs cursor-pointer"
-                >
-                  Save & Register User
-                </button>
-              </div>
-            </form>
-          )}
+          {/* Add User form removed */}
 
           {/* Users Table */}
           <div className="border border-slate-200 rounded-xl overflow-hidden">

@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   ArrowLeft,
   ChevronsRight,
@@ -37,8 +38,9 @@ import {
   Zap
 } from 'lucide-react';
 import { Student, DailyAttendanceRecord, AttendanceStatus, UserRole, AttendanceDetail } from '../../types';
-import { exportToExcel, exportToPDF, generateDailyAttendancePDF, printDocument } from '../../utils/exportUtils';
+import { exportToExcel, exportToPDF, printDocument } from '../../utils/exportUtils';
 import { logAuditAction } from '../../utils/storage';
+import { MiniCalendar } from './MiniCalendar';
 
 interface DigitalAttendanceProps {
   students: Student[];
@@ -51,6 +53,13 @@ interface DigitalAttendanceProps {
 // Helpers for time formatting and duration calculation
 function getCurrentTime12h(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function calculateCancellationExpiry(): string {
+  const windowMins = parseInt(localStorage.getItem('stm_cancellation_window_mins') || '30', 10);
+  const expiryDate = new Date();
+  expiryDate.setMinutes(expiryDate.getMinutes() + windowMins);
+  return expiryDate.toISOString();
 }
 
 function calculateDuration(checkInStr?: string, checkOutStr?: string, dateStr?: string): string {
@@ -139,6 +148,7 @@ export const DigitalAttendance: React.FC<DigitalAttendanceProps> = ({
   // PIN / Scanner mode state
   const [pinScanInput, setPinScanInput] = useState('');
   const [scanToast, setScanToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
 
   // Modal State for Student History
   const [historyStudent, setHistoryStudent] = useState<Student | null>(null);
@@ -224,14 +234,16 @@ export const DigitalAttendance: React.FC<DigitalAttendanceProps> = ({
   const handleBatchCheckInBox = () => {
     if (selectedBoxStudentIds.length === 0 || currentRecord.isLocked) return;
     const timeNow = getCurrentTime12h();
+    const expiryNow = calculateCancellationExpiry();
     const updated = activeDetails.map((d) => {
       if (selectedBoxStudentIds.includes(d.studentId) && d.status !== 'Checked In') {
         return {
           ...d,
           status: 'Checked In' as AttendanceStatus,
-          checkInTime: timeNow,
+          checkInTime: d.checkInTime || timeNow,
+          cancellationExpiry: d.cancellationExpiry || expiryNow,
           checkOutTime: undefined,
-          totalDuration: calculateDuration(timeNow, undefined, selectedDate),
+          totalDuration: calculateDuration(d.checkInTime || timeNow, undefined, selectedDate),
           markedAt: new Date().toLocaleTimeString(),
         };
       }
@@ -438,10 +450,12 @@ const query = search?.toLowerCase()?.trim() || '';
   const handleBulkCheckInAll = () => {
     if (currentRecord.isLocked) return;
     const timeNow = getCurrentTime12h();
+    const expiryNow = calculateCancellationExpiry();
     const updated = activeDetails.map((d) => ({
       ...d,
       status: 'Checked In' as AttendanceStatus,
       checkInTime: d.checkInTime || timeNow,
+      cancellationExpiry: d.cancellationExpiry || expiryNow,
       checkOutTime: undefined,
       totalDuration: calculateDuration(d.checkInTime || timeNow, undefined, selectedDate),
     }));
@@ -704,14 +718,17 @@ const query = search?.toLowerCase()?.trim() || '';
   };
 
   const handleExportPDF = () => {
-    generateDailyAttendancePDF({
-      selectedDate,
-      selectedStandard,
-      students,
-      attendanceRecords,
-    });
-    logAuditAction('System User', activeRole,
- 'PDF_EXPORT', 'Attendance', `Exported Daily Attendance PDF Report for ${selectedDate}`);
+    const headers = ['PIN', 'Student Name', 'Standard', 'Status', 'In', 'Out'];
+    const rows = filteredDetails.map(d => [
+      d.pinNumber,
+      d.studentName,
+      d.standard,
+      d.status,
+      d.checkInTime || '-',
+      d.checkOutTime || '-'
+    ]);
+    exportToPDF(`Daily Attendance - ${selectedDate}`, headers, rows, `Attendance_${selectedDate}`);
+    logAuditAction('System User', activeRole, 'PDF_EXPORT', 'Attendance', `Exported Daily Attendance PDF Report for ${selectedDate}`);
   };
 
   // Compute student history across all records
@@ -743,17 +760,23 @@ const query = search?.toLowerCase()?.trim() || '';
       if (d.studentId === studentId) {
         let checkIn = d.checkInTime;
         let checkOut = d.checkOutTime;
-        if (status === 'Present' || status === 'Late') {
-          if (!checkIn) checkIn = timeNow;
+        let expiry = d.cancellationExpiry;
+        if (status === 'Present' || status === 'Late' || status === 'Checked In') {
+          if (!checkIn) {
+            checkIn = timeNow;
+            expiry = calculateCancellationExpiry();
+          }
         } else if (status === 'Absent' || status === 'Leave') {
           checkIn = undefined;
           checkOut = undefined;
+          expiry = undefined;
         }
         return {
           ...d,
           status,
           checkInTime: checkIn,
           checkOutTime: checkOut,
+          cancellationExpiry: expiry,
           totalDuration: calculateDuration(checkIn, checkOut, selectedDate),
           markedAt: new Date().toLocaleTimeString(),
         };
@@ -771,7 +794,8 @@ const query = search?.toLowerCase()?.trim() || '';
         return {
           ...d,
           status: 'Checked In' as AttendanceStatus,
-          checkInTime: timeNow,
+          checkInTime: d.checkInTime || timeNow,
+          cancellationExpiry: d.cancellationExpiry || calculateCancellationExpiry(),
           markedAt: new Date().toLocaleTimeString(),
         };
       }
@@ -798,11 +822,59 @@ const query = search?.toLowerCase()?.trim() || '';
     setActiveDetails(updated);
   };
 
+  const handleConfirmCancel = () => {
+    if (!cancelTargetId) return;
+
+    const student = activeDetails.find(d => d.studentId === cancelTargetId);
+    if (!student) {
+      setScanToast({ message: 'Error: Student record not found.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      setCancelTargetId(null);
+      return;
+    }
+
+    if (!student.cancellationExpiry || new Date() > new Date(student.cancellationExpiry)) {
+      setScanToast({ message: 'Error: Cancellation period has expired.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      setCancelTargetId(null);
+      return;
+    }
+
+    const oldStatus = student.status;
+    const updated = activeDetails.map((d) => {
+      if (d.studentId === cancelTargetId) {
+        return {
+          ...d,
+          status: 'Absent' as AttendanceStatus,
+          checkInTime: undefined,
+          checkOutTime: undefined,
+          cancellationExpiry: undefined,
+          totalDuration: undefined,
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+    setActiveDetails(updated);
+    
+    logAuditAction(
+      'System User', 
+      activeRole, 
+      'CANCEL_ATTENDANCE', 
+      'Attendance', 
+      `Cancelled attendance for ${student.studentName} (Prev Status: ${oldStatus})`
+    );
+
+    setCancelTargetId(null);
+    setScanToast({ message: 'Attendance cancelled successfully.', type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-28 font-sans text-slate-800 relative min-h-screen">
+    <div className="w-full flex-1 flex flex-col min-h-0 space-y-4 font-sans text-slate-800 relative">
       
       {/* Header Section */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="shrink-0 bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 border border-blue-100 shrink-0">
             <ClipboardCheck className="w-6 h-6" />
@@ -853,9 +925,13 @@ const query = search?.toLowerCase()?.trim() || '';
           {scanToast.message}
         </div>
       )}
-      
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+        <MiniCalendar selectedDate={selectedDate} onDateSelect={setSelectedDate} />
+        
+        <div className="flex-1 flex flex-col min-h-0 space-y-4">
+          {/* Summary Cards */}
+          <div className="shrink-0 grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-center">
           <span className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Total Students</span>
           <span className="text-3xl font-extrabold text-slate-800">{stats.total}</span>
@@ -879,7 +955,7 @@ const query = search?.toLowerCase()?.trim() || '';
       </div>
 
       {/* Search & Filters */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col md:flex-row gap-4 items-center">
+      <div className="shrink-0 bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col md:flex-row gap-4 items-center">
         <div className="relative flex-1 w-full">
           <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -959,11 +1035,11 @@ const query = search?.toLowerCase()?.trim() || '';
       </div>
 
       {/* Student List View */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+      <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="flex-1 overflow-auto">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-50 border-b border-slate-200 shadow-sm">
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Student</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Roll No. / Class</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
@@ -1094,6 +1170,30 @@ const query = search?.toLowerCase()?.trim() || '';
                           >
                             OUT
                           </button>
+                          
+                          {(isIn || isPresent) && !isOut && (
+                            <>
+                              <div className="w-px h-6 bg-slate-200 mx-1"></div>
+                              {student.cancellationExpiry && new Date() < new Date(student.cancellationExpiry) ? (
+                                <button
+                                  onClick={() => setCancelTargetId(student.studentId)}
+                                  disabled={currentRecord.isLocked}
+                                  title="Cancel Attendance"
+                                  className="px-2 py-2 rounded-lg text-xs font-bold flex items-center justify-center transition-colors bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-40 border border-rose-200"
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <button
+                                  disabled
+                                  title="Cancellation period has expired"
+                                  className="px-2 py-2 rounded-lg text-xs font-bold flex items-center justify-center transition-colors bg-slate-100 text-slate-400 opacity-50 cursor-not-allowed border border-slate-200"
+                                >
+                                  Expired
+                                </button>
+                              )}
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1106,8 +1206,8 @@ const query = search?.toLowerCase()?.trim() || '';
       </div>
 
       {/* Sticky Bottom Bar */}
-      <div className="fixed bottom-0 left-0 right-0 lg:left-64 md:left-16 bg-white/90 backdrop-blur-md border-t border-slate-200/80 p-4 z-40 shadow-[0_-8px_30px_-15px_rgba(0,0,0,0.1)]">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+      <div className="shrink-0 bg-white rounded-2xl border border-slate-200 p-4 shadow-sm z-40">
+        <div className="w-full flex items-center justify-between gap-4">
           <div className="text-sm font-bold text-slate-500 hidden sm:block">
             {stats.total} Total Students • {stats.present + stats.checkedIn + stats.checkedOut + stats.late} Present
           </div>
@@ -1133,6 +1233,37 @@ const query = search?.toLowerCase()?.trim() || '';
         </div>
       </div>
       
+        </div>
+      </div>
+      
+      {/* Cancellation Confirmation Modal */}
+      {cancelTargetId && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white max-w-md w-full p-6 rounded-3xl border border-slate-200 shadow-xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <h3 className="text-base font-black text-slate-900">Confirm Cancellation</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to cancel this student's attendance? The status will be reset and this action will be logged.
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setCancelTargetId(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                Keep Attendance
+              </button>
+              <button
+                onClick={handleConfirmCancel}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer"
+              >
+                Confirm Cancellation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

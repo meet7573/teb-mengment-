@@ -33,6 +33,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [academicYear, setAcademicYear] = useState(() => {
     return localStorage.getItem('stm_academic_year') || '2025 - 2026';
   });
+  const [cancellationWindow, setCancellationWindow] = useState(() => {
+    return localStorage.getItem('stm_cancellation_window_mins') || '30';
+  });
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -41,9 +44,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     e.preventDefault();
     localStorage.setItem('stm_school_name', schoolName);
     localStorage.setItem('stm_academic_year', academicYear);
+    localStorage.setItem('stm_cancellation_window_mins', cancellationWindow);
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
-    logAuditAction('System User', activeRole, 'SETTINGS_UPDATE', 'System', 'Updated School Name and Academic Year');
+    logAuditAction('System User', activeRole, 'SETTINGS_UPDATE', 'System', `Updated Settings (Cancel Window: ${cancellationWindow} mins)`);
   };
 
   const handleExportAllData = () => {
@@ -157,6 +161,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 required
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-xs text-slate-900 font-medium outline-none focus:border-indigo-600 transition"
               />
+            </div>
+            
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">Cancellation Window (Minutes)</label>
+              <select
+                value={cancellationWindow}
+                onChange={(e) => setCancellationWindow(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-xs text-slate-900 font-medium outline-none focus:border-indigo-600 transition"
+              >
+                <option value="15">15 Minutes</option>
+                <option value="30">30 Minutes</option>
+                <option value="60">1 Hour</option>
+                <option value="120">2 Hours</option>
+              </select>
             </div>
 
             <button

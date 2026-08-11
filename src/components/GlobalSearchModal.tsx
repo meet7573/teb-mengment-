@@ -1,9 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Search, X, Users, Tablet, Boxes, FileCheck, ArrowRight } from 'lucide-react';
-import { getStudents, getTablets, getTabletBoxes, getAssignments } from '../utils/storage';
+import { Search, X, Users, Tablet as TabletIcon, Boxes, FileCheck, ArrowRight } from 'lucide-react';
 import { GlobalSearchResult } from '../types';
 
+import { Student, Tablet, TabletBox, TabletAssignment } from '../types';
+
 interface GlobalSearchModalProps {
+  students: Student[];
+  tablets: Tablet[];
+  boxes: TabletBox[];
+  assignments: TabletAssignment[];
   isOpen: boolean;
   onClose: () => void;
   onNavigate: (tab: string, itemId?: string) => void;
@@ -13,13 +18,13 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   isOpen,
   onClose,
   onNavigate,
+  students,
+  tablets,
+  boxes,
+  assignments,
 }) => {
   const [query, setQuery] = useState('');
 
-  const students = useMemo(() => getStudents(), [isOpen]);
-  const tablets = useMemo(() => getTablets(), [isOpen]);
-  const boxes = useMemo(() => getTabletBoxes(), [isOpen]);
-  const assignments = useMemo(() => getAssignments(), [isOpen]);
 
   const searchResults: GlobalSearchResult[] = useMemo(() => {
     if (!query.trim()) return [];
@@ -90,7 +95,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const getIcon = (type: GlobalSearchResult['type']) => {
     switch (type) {
       case 'Student': return <Users className="w-4 h-4 text-emerald-500" />;
-      case 'Tablet': return <Tablet className="w-4 h-4 text-blue-500" />;
+      case 'Tablet': return <TabletIcon className="w-4 h-4 text-blue-500" />;
       case 'Box': return <Boxes className="w-4 h-4 text-amber-500" />;
       case 'Assignment': return <FileCheck className="w-4 h-4 text-purple-500" />;
     }

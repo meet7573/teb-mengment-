@@ -82,6 +82,7 @@ export interface AttendanceDetail {
   checkInTime?: string;
   checkOutTime?: string;
   totalDuration?: string;
+  cancellationExpiry?: string; // ISO string representing expiry
   remarks?: string;
   markedAt: string;
 }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Database, X, ShieldCheck, Search, Filter, RefreshCw } from 'lucide-react';
 import { AuditLog } from '../../types';
-import { getAuditLogs, initLocalStorage } from '../../utils/storage';
+import { subscribeToCollection } from '../../lib/db';
 
 interface AuditLogsModalProps {
   isOpen: boolean;
@@ -18,7 +18,12 @@ export const AuditLogsModal: React.FC<AuditLogsModalProps> = ({
   const [selectedModule, setSelectedModule] = useState<string>('All');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  const logs = getAuditLogs();
+  const [logs, setLogs] = React.useState<AuditLog[]>([]);
+  React.useEffect(() => {
+    if (isOpen) {
+      return subscribeToCollection<AuditLog>('auditLogs', setLogs);
+    }
+  }, [isOpen]);
 
   const filteredLogs = logs.filter((log) => {
     const matchSearch =

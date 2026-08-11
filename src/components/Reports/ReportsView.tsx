@@ -24,7 +24,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { Student, Tablet as TabletType, TabletBox, DailyAttendanceRecord, UserRole } from '../../types';
-import { exportToExcel, exportToPDF, generateDailyAttendancePDF, printDocument } from '../../utils/exportUtils';
+import { exportToExcel, exportToPDF, printDocument } from '../../utils/exportUtils';
 import { logAuditAction } from '../../utils/storage';
 
 interface ReportsViewProps {
@@ -266,19 +266,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // Dedicated Daily Attendance PDF Generator Trigger
   const handleDownloadDailyPDF = () => {
-    generateDailyAttendancePDF({
-      selectedDate,
-      selectedStandard,
-      students,
-      attendanceRecords,
-    });
-    logAuditAction(
-      'System User',
-      activeRole,
-      'PDF_EXPORT',
-      'Attendance',
-      `Generated Daily Attendance PDF for date ${selectedDate} (Std: ${selectedStandard})`
-    );
+    const headers = Object.keys(dailyReportData[0] || {});
+    const rows = dailyReportData.map(d => Object.values(d));
+    exportToPDF(`Daily Attendance - ${selectedDate}`, headers, rows, `Attendance_${selectedDate}`);
+    logAuditAction('System User', activeRole, 'PDF_EXPORT', 'Attendance', `Exported Daily Attendance PDF Report for ${selectedDate}`);
   };
 
   // Generic Export handlers

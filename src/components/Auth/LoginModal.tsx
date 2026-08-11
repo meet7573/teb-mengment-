@@ -9,6 +9,9 @@ import {
   School
 } from 'lucide-react';
 import { AppUser, setCurrentUser } from '../../utils/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { auth, db } from '../../lib/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { UserRole } from '../../types';
 
 interface LoginModalProps {
@@ -43,216 +46,92 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regRole, setRegRole] = useState<UserRole>('Admin');
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const verify = params.get('verify');
-    const reset = params.get('reset');
 
-    if (verify) {
-      setMode('verify');
-      handleVerifyEmail(verify);
-    } else if (reset) {
-      setMode('reset');
-      setResetToken(reset);
-    }
-  }, []);
 
-  const handleVerifyEmail = async (token: string) => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/auth/verify-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
-      });
-      const data = await res.json();
-      setLoading(false);
-      
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Verification failed.');
-      } else {
-        setSuccessMsg(data.message || 'Email verified successfully.');
-        setTimeout(() => setMode('login'), 3000);
-      }
-    } catch (err) {
-      setLoading(false);
-      setErrorMsg('Network error.');
-    }
-  };
-
-  if (!isOpen) return null;
-
+  
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
     if (!usernameOrEmail.trim() || !password.trim()) {
-      setErrorMsg('Please enter both Username/Email and Password.');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usernameOrEmail, password })
-      });
-      const data = await res.json();
-      setLoading(false);
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Login failed.');
-      } else {
-        localStorage.setItem('token', data.token);
-        setCurrentUser(data.user);
-        onLoginSuccess(data.user);
-      }
-    } catch (err) {
-      setLoading(false);
-      setErrorMsg('Network error during login.');
-    }
-  };
-
-  const handleResendVerify = async () => {
-    if (!usernameOrEmail) {
-      setErrorMsg('Please enter your email/username first.');
+      setErrorMsg('Please enter both Email and Password.');
       return;
     }
     try {
       setLoading(true);
-      const res = await fetch('/api/auth/resend-verification', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: usernameOrEmail })
-      });
-      const data = await res.json();
+      const userCred = await signInWithEmailAndPassword(auth, usernameOrEmail, password);
+      const userDoc = await getDoc(doc(db, 'users', userCred.user.uid));
       setLoading(false);
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Failed to resend email.');
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as AppUser;
+        if (userData.status === 'Inactive') {
+          setErrorMsg('Account is disabled.');
+        } else {
+          setCurrentUser(userData);
+          onLoginSuccess(userData);
+        }
       } else {
-        setSuccessMsg('Verification email sent successfully.');
-        setErrorMsg('');
+        setErrorMsg('User profile not found in database.');
       }
-    } catch (err) {
+    } catch (err: any) {
       setLoading(false);
-      setErrorMsg('Network error.');
+      setErrorMsg(err.message || 'Login failed.');
     }
   };
 
+  const handleResendVerify = async () => {};
+
+if (!isOpen) return null;
+
+  
   const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
-    if (!forgotEmail.trim()) return;
-    
     try {
       setLoading(true);
-      const res = await fetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: forgotEmail })
-      });
-      const data = await res.json();
+      await sendPasswordResetEmail(auth, forgotEmail);
       setLoading(false);
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Failed to send reset email.');
-      } else {
-        setSuccessMsg(data.message || 'Password reset email sent.');
-        setTimeout(() => {
-          setMode('login');
-          setForgotEmail('');
-          setSuccessMsg('');
-        }, 3000);
-      }
-    } catch (err) {
+      setSuccessMsg('Reset link sent to your email.');
+      setTimeout(() => setMode('login'), 3000);
+    } catch (err: any) {
       setLoading(false);
-      setErrorMsg('Network error.');
+      setErrorMsg(err.message || 'Failed to send reset link.');
     }
   };
 
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg('');
-    setSuccessMsg('');
-    
-    if (newPassword !== confirmNewPassword) {
-      setErrorMsg('Passwords do not match.');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const res = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: resetToken, newPassword })
-      });
-      const data = await res.json();
-      setLoading(false);
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Failed to reset password.');
-      } else {
-        setSuccessMsg(data.message || 'Password updated successfully.');
-        setTimeout(() => {
-          setMode('login');
-          setSuccessMsg('');
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }, 3000);
-      }
-    } catch (err) {
-      setLoading(false);
-      setErrorMsg('Network error.');
-    }
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
-
-    if (!regFullName.trim() || !regUsername.trim() || !regEmail.trim() || !regMobile.trim() || !regPassword) {
-      setErrorMsg('All fields are required.');
-      return;
-    }
-
     if (regPassword !== regConfirmPassword) {
       setErrorMsg('Passwords do not match.');
       return;
     }
-
     try {
       setLoading(true);
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fullName: regFullName,
-          username: regUsername,
-          email: regEmail,
-          mobileNumber: regMobile,
-          password: regPassword,
-          role: regRole
-        })
-      });
-      const data = await res.json();
+      const userCred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
+      const newUser: AppUser = {
+        id: userCred.user.uid,
+        fullName: regFullName,
+        username: regUsername,
+        email: regEmail,
+        mobileNumber: regMobile,
+        role: regRole,
+        status: 'Active',
+        createdAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'users', userCred.user.uid), newUser);
       setLoading(false);
-
-      if (!res.ok) {
-        setErrorMsg(data.error || 'Registration failed.');
-      } else {
-        setSuccessMsg(data.message || 'Registration successful. Please verify your email.');
-        setTimeout(() => {
-          setMode('login');
-          setUsernameOrEmail(regUsername);
-          setSuccessMsg('');
-        }, 3000);
-      }
-    } catch (err) {
+      setSuccessMsg('Registration successful! Please login.');
+      setTimeout(() => setMode('login'), 2000);
+    } catch (err: any) {
       setLoading(false);
-      setErrorMsg('Network error.');
+      setErrorMsg(err.message || 'Registration failed.');
     }
   };
 

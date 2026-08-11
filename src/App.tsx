@@ -17,14 +17,10 @@ import { ThemeSettingsModal } from './components/Theme/ThemeSettingsModal';
 import { ThemeProvider } from './context/ThemeContext';
 
 import { 
-  getStudents, saveStudents,
-  getTablets, saveTablets,
-  getTabletBoxes, saveTabletBoxes,
-  getAssignments, saveAssignments,
-  getAttendanceRecords, saveAttendanceRecords,
   getStoredRole, saveStoredRole,
-  initLocalStorage, clearAllDatabase
+  clearAllDatabase
 } from './utils/storage';
+import { subscribeToCollection, syncCollection } from './lib/db';
 import { AppUser, getCurrentUser, logoutUser } from './utils/auth';
 import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, UserRole } from './types';
 
@@ -50,41 +46,28 @@ function MainApp() {
 
   // Data State
   const [students, setStudentsState] = useState<Student[]>([]);
-  const [tablets, setTabletsState] = useState<Tablet[]>(getTablets);
-  const [boxes, setBoxesState] = useState<TabletBox[]>(getTabletBoxes);
-  const [assignments, setAssignmentsState] = useState<TabletAssignment[]>(getAssignments);
-  const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>(getAttendanceRecords);
+  const [tablets, setTabletsState] = useState<Tablet[]>([]);
+  const [boxes, setBoxesState] = useState<TabletBox[]>([]);
+  const [assignments, setAssignmentsState] = useState<TabletAssignment[]>([]);
+  const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>([]);
 
-  // Fetch initial data from SQLite backend
+  // Fetch initial data from Firestore
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await fetch('/api/sync/all');
-        if (res.ok) {
-          const data = await res.json();
-          const mappedStudents: Student[] = data.students.map((d: any) => ({
-            id: d.id,
-            pinNumber: d.pinNumber,
-            name: d.name,
-            standard: d.standard as any,
-            isCoachingStudent: d.isCoachingStudent,
-            status: d.status,
-            createdAt: d.createdAt
-          }));
-          setStudentsState(mappedStudents);
-          setAttendanceRecordsState(data.attendanceRecords);
-          
-          // Also persist back to localStorage just in case UI expects it
-          saveStudents(mappedStudents);
-          saveAttendanceRecords(data.attendanceRecords);
-        }
-      } catch (err) {
-        console.error('Failed to fetch data:', err);
-      }
+    if (!currentUser) return;
+    
+    const unsubStudents = subscribeToCollection<Student>('students', setStudentsState);
+    const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState);
+    const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState);
+    const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState);
+    const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState);
+    
+    return () => {
+      unsubStudents();
+      unsubTablets();
+      unsubBoxes();
+      unsubAssignments();
+      unsubAttendance();
     };
-    if (currentUser) {
-      fetchData();
-    }
   }, [currentUser]);
 
   // Quick Pre-selection state for Tablet Assignment
@@ -130,42 +113,32 @@ function MainApp() {
 
   // Data Save Handlers
   const handleSaveStudents = async (updated: Student[]) => {
-    setStudentsState(updated);
-    saveStudents(updated);
     try {
-      await fetch('/api/sync/students', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
-      });
+      await syncCollection('students', students, updated);
     } catch (e) { console.error('Failed to sync students', e); }
   };
 
-  const handleSaveTablets = (updated: Tablet[]) => {
-    setTabletsState(updated);
-    saveTablets(updated);
-    setBoxesState(getTabletBoxes());
+  const handleSaveTablets = async (updated: Tablet[]) => {
+    try {
+      await syncCollection('tablets', tablets, updated);
+    } catch (e) { console.error('Failed to sync tablets', e); }
   };
 
-  const handleSaveBoxes = (updated: TabletBox[]) => {
-    setBoxesState(updated);
-    saveTabletBoxes(updated);
+  const handleSaveBoxes = async (updated: TabletBox[]) => {
+    try {
+      await syncCollection('boxes', boxes, updated);
+    } catch (e) { console.error('Failed to sync boxes', e); }
   };
 
-  const handleSaveAssignments = (updated: TabletAssignment[]) => {
-    setAssignmentsState(updated);
-    saveAssignments(updated);
+  const handleSaveAssignments = async (updated: TabletAssignment[]) => {
+    try {
+      await syncCollection('assignments', assignments, updated);
+    } catch (e) { console.error('Failed to sync assignments', e); }
   };
 
   const handleSaveAttendance = async (updated: DailyAttendanceRecord[]) => {
-    setAttendanceRecordsState(updated);
-    saveAttendanceRecords(updated);
     try {
-      await fetch('/api/sync/attendance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
-      });
+      await syncCollection('attendance', attendanceRecords, updated);
     } catch (e) { console.error('Failed to sync attendance', e); }
   };
 
@@ -223,9 +196,9 @@ function MainApp() {
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 transition-all duration-300 p-4 sm:p-6 w-full min-h-screen ${
+      <main className={`flex-1 transition-all duration-300 min-w-0 ${
         sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'
-      }`}>
+      } ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
           
           {activeTab === 'dashboard' && (
             <DashboardView
@@ -326,6 +299,10 @@ function MainApp() {
 
       {/* Global Search Dialog */}
       <GlobalSearchModal
+        students={students}
+        tablets={tablets}
+        boxes={boxes}
+        assignments={assignments}
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
         onNavigate={(tab) => setActiveTab(tab)}

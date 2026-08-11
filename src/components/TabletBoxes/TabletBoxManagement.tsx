@@ -31,7 +31,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { TabletBox, Tablet, Student, UserRole } from '../../types';
-import { validateBoxCapacity, logAuditAction, getStudents, saveStudents } from '../../utils/storage';
+import { validateBoxCapacity, logAuditAction } from '../../utils/storage';
 import { QRCodeImage } from '../Scanner/QRCodeImage';
 
 interface TabletBoxManagementProps {
@@ -90,8 +90,7 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
 
   // All students lookup
   const allStudents = useMemo(() => {
-    if (students && students.length > 0) return students;
-    return getStudents();
+    return students;
   }, [students]);
 
   // Students available for assignment (not assigned to another box)
@@ -553,7 +552,7 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
     if (onSaveStudents) {
       onSaveStudents(updatedStudents);
     } else {
-      saveStudents(updatedStudents);
+      if (onSaveStudents) onSaveStudents(updatedStudents);
     }
 
     logAuditAction(
@@ -639,7 +638,7 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
     if (!movingTablet || !targetBoxIdForMove) return;
 
     // Check target box capacity
-    const validation = validateBoxCapacity(targetBoxIdForMove, 1);
+    const validation = validateBoxCapacity(tablets, targetBoxIdForMove, 1);
     if (!validation.valid) {
       setCapacityError(validation.message);
       return;
