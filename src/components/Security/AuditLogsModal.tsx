@@ -22,9 +22,9 @@ export const AuditLogsModal: React.FC<AuditLogsModalProps> = ({
 
   const filteredLogs = logs.filter((log) => {
     const matchSearch =
-      log.action.toLowerCase().includes(search.toLowerCase()) ||
-      log.details.toLowerCase().includes(search.toLowerCase()) ||
-      log.userName.toLowerCase().includes(search.toLowerCase());
+      log.action?.toLowerCase()?.includes(search?.toLowerCase()) ||
+      log.details?.toLowerCase()?.includes(search?.toLowerCase()) ||
+      log.userName?.toLowerCase()?.includes(search?.toLowerCase());
 
     const matchModule = selectedModule === 'All' || log.module === selectedModule;
 

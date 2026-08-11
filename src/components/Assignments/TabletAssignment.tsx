@@ -58,14 +58,14 @@ export const TabletAssignmentView: React.FC<TabletAssignmentProps> = ({
   const [scanNotification, setScanNotification] = useState<string | null>(null);
 
   const handleScanSuccess = (rawText: string) => {
-    const cleanQuery = rawText.replace(/^(QR-|BC-)/i, '').trim().toLowerCase();
+    const cleanQuery = rawText.replace(/^(QR-|BC-)/i, '').trim()?.toLowerCase();
     
     // Find matching tablet in inventory
     const matchedTablet = tablets.find((t) => {
-      const numClean = t.tabletNumber.toLowerCase();
-      const qrClean = t.qrCode.toLowerCase();
-      const bcClean = t.barcode.toLowerCase();
-      const rawLower = rawText.toLowerCase();
+      const numClean = t.tabletNumber?.toLowerCase();
+      const qrClean = t.qrCode?.toLowerCase();
+      const bcClean = t.barcode?.toLowerCase();
+      const rawLower = rawText?.toLowerCase();
 
       return (
         numClean === rawLower ||
@@ -132,10 +132,10 @@ export const TabletAssignmentView: React.FC<TabletAssignmentProps> = ({
   const filteredAssignments = useMemo(() => {
     return assignments.filter((a) => {
       const matchSearch =
-        a.studentName.toLowerCase().includes(search.toLowerCase()) ||
-        a.pinNumber.toLowerCase().includes(search.toLowerCase()) ||
-        a.tabletNumber.toLowerCase().includes(search.toLowerCase()) ||
-        a.tabletName.toLowerCase().includes(search.toLowerCase());
+        a.studentName?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        a.pinNumber?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        a.tabletNumber?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        a.tabletName?.toLowerCase()?.includes(search?.toLowerCase());
 
       const matchStatus = activeTab === 'Active' ? a.status === 'Active' : true;
 

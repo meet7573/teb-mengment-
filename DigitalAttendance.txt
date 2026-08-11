@@ -1,0 +1,1381 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  ClipboardCheck, 
+  Calendar, 
+  Search, 
+  UserCheck, 
+  UserX, 
+  Clock, 
+  Lock, 
+  Unlock, 
+  Sparkles, 
+  QrCode, 
+  FileSpreadsheet, 
+  FileText, 
+  Save, 
+  Printer, 
+  History, 
+  LogIn, 
+  LogOut, 
+  X, 
+  Edit3, 
+  Tablet, 
+  Users,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  ArrowRight,
+  ArrowLeft,
+  ChevronsRight,
+  ChevronsLeft,
+  GripVertical,
+  CheckSquare,
+  Square,
+  UserPlus,
+  ChevronDown,
+  Filter,
+  Zap
+} from 'lucide-react';
+import { Student, DailyAttendanceRecord, AttendanceStatus, UserRole, AttendanceDetail } from '../../types';
+import { exportToExcel, exportToPDF, generateDailyAttendancePDF, printDocument } from '../../utils/exportUtils';
+import { logAuditAction } from '../../utils/storage';
+
+interface DigitalAttendanceProps {
+  students: Student[];
+  attendanceRecords: DailyAttendanceRecord[];
+  onSaveAttendanceRecords: (records: DailyAttendanceRecord[]) => void;
+  activeRole: UserRole;
+  onNavigate?: (tab: string) => void;
+}
+
+// Helpers for time formatting and duration calculation
+function getCurrentTime12h(): string {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function calculateDuration(checkInStr?: string, checkOutStr?: string, dateStr?: string): string {
+  if (!checkInStr) return '-';
+  try {
+    const today = dateStr || new Date().toISOString().slice(0, 10);
+    const inDate = new Date(`${today} ${checkInStr}`);
+    if (isNaN(inDate.getTime())) return '-';
+
+    let outDate: Date;
+    if (checkOutStr) {
+      outDate = new Date(`${today} ${checkOutStr}`);
+      if (isNaN(outDate.getTime())) return '-';
+    } else {
+      outDate = new Date();
+    }
+
+    let diffMs = outDate.getTime() - inDate.getTime();
+    if (diffMs < 0) diffMs = 0;
+
+    const totalMins = Math.floor(diffMs / (1000 * 60));
+    const hours = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+
+    if (hours === 0 && mins === 0) return '< 1m';
+    if (hours === 0) return `${mins}m`;
+    return `${hours}h ${mins}m`;
+  } catch {
+    return '-';
+  }
+}
+
+// Parse time strings like "05:00 PM", "5:00 PM", "17:00" to minutes from midnight
+function parseTimeStringToMinutes(timeStr: string): number | null {
+  if (!timeStr) return null;
+  const cleaned = timeStr.trim().toUpperCase();
+  const match = cleaned.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const ampm = match[3];
+
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+
+  return hours * 60 + minutes;
+}
+
+export const DigitalAttendance: React.FC<DigitalAttendanceProps> = ({
+  students,
+  attendanceRecords,
+  onSaveAttendanceRecords,
+  activeRole,
+  onNavigate,
+}) => {
+  // Selected Date state (defaults to today)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+
+  // Filters
+  const [selectedStandard, setSelectedStandard] = useState<string>('All');
+  const [selectedCoaching, setSelectedCoaching] = useState<string>('All');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('All');
+  const [search, setSearch] = useState('');
+
+  // PIN / Scanner mode state
+  const [pinScanInput, setPinScanInput] = useState('');
+  const [scanToast, setScanToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Modal State for Student History
+  const [historyStudent, setHistoryStudent] = useState<Student | null>(null);
+
+  // Modal State for Editing Remarks
+  const [remarkStudent, setRemarkStudent] = useState<{ id: string; name: string; currentRemark: string } | null>(null);
+  const [tempRemark, setTempRemark] = useState('');
+
+  // Bulk Check-Out & Background Scheduler State
+  const [isBulkCheckOutModalOpen, setIsBulkCheckOutModalOpen] = useState(false);
+  const [bulkCheckOutTime, setBulkCheckOutTime] = useState<string>('04:30 PM');
+  const [selectedBulkStudentIds, setSelectedBulkStudentIds] = useState<string[]>([]);
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+
+  // Background Process End-of-Day Scheduler State
+  const [autoCheckOutEnabled, setAutoCheckOutEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('auto_checkout_enabled') === 'true';
+  });
+  const [autoCheckOutTime, setAutoCheckOutTime] = useState<string>(() => {
+    return localStorage.getItem('auto_checkout_time') || '05:00 PM';
+  });
+  const [autoCheckOutExecutedForDate, setAutoCheckOutExecutedForDate] = useState<string | null>(null);
+
+  // Selected Student Spotlight State (Requirement 1)
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+
+  // Searchable Student Selection Box State (Requirement 2)
+  const [searchBoxQuery, setSearchBoxQuery] = useState('');
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  
+  // Dual Transfer Box State
+  const [availableCheckedIds, setAvailableCheckedIds] = useState<string[]>([]);
+  const [selectedBoxStudentIds, setSelectedBoxStudentIds] = useState<string[]>([]);
+  const [selectedBoxCheckedIds, setSelectedBoxCheckedIds] = useState<string[]>([]);
+
+  // Move checked items from Available (Left Box) to Selected (Right Box)
+  const handleMoveToSelected = () => {
+    if (availableCheckedIds.length === 0) return;
+    const newSelected = Array.from(new Set([...selectedBoxStudentIds, ...availableCheckedIds]));
+    setSelectedBoxStudentIds(newSelected);
+    setAvailableCheckedIds([]);
+  };
+
+  // Move checked items from Selected (Right Box) back to Available
+  const handleMoveToAvailable = () => {
+    if (selectedBoxCheckedIds.length === 0) return;
+    const newSelected = selectedBoxStudentIds.filter(id => !selectedBoxCheckedIds.includes(id));
+    setSelectedBoxStudentIds(newSelected);
+    setSelectedBoxCheckedIds([]);
+  };
+
+  // Move ALL filtered available students to Selected Box
+  const handleMoveAllToSelected = () => {
+    const availableIds = activeDetails
+      .map(d => d.studentId)
+      .filter(id => !selectedBoxStudentIds.includes(id));
+    const newSelected = Array.from(new Set([...selectedBoxStudentIds, ...availableIds]));
+    setSelectedBoxStudentIds(newSelected);
+    setAvailableCheckedIds([]);
+  };
+
+  // Clear Selected Students Box
+  const handleClearSelectedBox = () => {
+    setSelectedBoxStudentIds([]);
+    setSelectedBoxCheckedIds([]);
+  };
+
+  // Toggle single item in available box
+  const toggleAvailableCheck = (studentId: string) => {
+    setAvailableCheckedIds(prev => 
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
+  };
+
+  // Toggle single item in selected box
+  const toggleSelectedCheck = (studentId: string) => {
+    setSelectedBoxCheckedIds(prev => 
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
+  };
+
+  // Batch Check-In for Selected Box
+  const handleBatchCheckInBox = () => {
+    if (selectedBoxStudentIds.length === 0 || currentRecord.isLocked) return;
+    const timeNow = getCurrentTime12h();
+    const updated = activeDetails.map((d) => {
+      if (selectedBoxStudentIds.includes(d.studentId) && d.status !== 'Checked In') {
+        return {
+          ...d,
+          status: 'Checked In' as AttendanceStatus,
+          checkInTime: timeNow,
+          checkOutTime: undefined,
+          totalDuration: calculateDuration(timeNow, undefined, selectedDate),
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+    setActiveDetails(updated);
+    setScanToast({ message: `Batch Checked In ${selectedBoxStudentIds.length} selected students!`, type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Batch Check-Out for Selected Box
+  const handleBatchCheckOutBox = () => {
+    if (selectedBoxStudentIds.length === 0 || currentRecord.isLocked) return;
+    const timeNow = getCurrentTime12h();
+    const updated = activeDetails.map((d) => {
+      if (selectedBoxStudentIds.includes(d.studentId)) {
+        const checkIn = d.checkInTime || '08:00 AM';
+        return {
+          ...d,
+          status: 'Checked Out' as AttendanceStatus,
+          checkOutTime: timeNow,
+          totalDuration: calculateDuration(checkIn, timeNow, selectedDate),
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+    setActiveDetails(updated);
+    setScanToast({ message: `Batch Checked Out ${selectedBoxStudentIds.length} selected students!`, type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Find or initialize record for selectedDate
+  const currentRecord = useMemo(() => {
+    return (
+      attendanceRecords.find((r) => r.date === selectedDate) || {
+        id: `att-${selectedDate}`,
+        date: selectedDate,
+        isLocked: false,
+        submittedBy: 'Pending',
+        submittedAt: 'Not submitted',
+        details: students.map((s) => ({
+          studentId: s.id,
+          studentName: s.name,
+          pinNumber: s.pinNumber,
+          standard: s.standard,
+          isCoachingStudent: s.isCoachingStudent,
+          assignedTabletNumber: s.assignedTabletNumber,
+          status: 'Absent' as AttendanceStatus,
+          markedAt: new Date().toLocaleTimeString(),
+        })),
+      }
+    );
+  }, [selectedDate, attendanceRecords, students]);
+
+  // Local state for active editing before saving/locking
+  const [activeDetails, setActiveDetails] = useState<AttendanceDetail[]>(currentRecord.details);
+
+  // Sync activeDetails when currentRecord changes or new students added
+  useEffect(() => {
+    const detailsMap = new Map<string, AttendanceDetail>(currentRecord.details.map(d => [d.studentId, d]));
+    const mergedDetails: AttendanceDetail[] = students.map(s => {
+      const existing = detailsMap.get(s.id);
+      if (existing) {
+        return {
+          studentId: existing.studentId,
+          studentName: existing.studentName,
+          pinNumber: existing.pinNumber,
+          standard: existing.standard,
+          isCoachingStudent: s.isCoachingStudent,
+          assignedTabletNumber: s.assignedTabletNumber,
+          status: existing.status,
+          checkInTime: existing.checkInTime,
+          checkOutTime: existing.checkOutTime,
+          totalDuration: existing.totalDuration,
+          remarks: existing.remarks,
+          markedAt: existing.markedAt,
+        };
+      }
+      return {
+        studentId: s.id,
+        studentName: s.name,
+        pinNumber: s.pinNumber,
+        standard: s.standard,
+        isCoachingStudent: s.isCoachingStudent,
+        assignedTabletNumber: s.assignedTabletNumber,
+        status: 'Absent' as AttendanceStatus,
+        markedAt: new Date().toLocaleTimeString(),
+      };
+    });
+
+    setActiveDetails(mergedDetails);
+  }, [currentRecord, students]);
+
+  // Status statistics for this date
+  const stats = useMemo(() => {
+    let checkedIn = 0, checkedOut = 0, present = 0, absent = 0, late = 0, leave = 0;
+    activeDetails.forEach((d) => {
+      if (d.status === 'Checked In') checkedIn++;
+      else if (d.status === 'Checked Out') checkedOut++;
+      else if (d.status === 'Present') present++;
+      else if (d.status === 'Absent') absent++;
+      else if (d.status === 'Late') late++;
+      else if (d.status === 'Leave') leave++;
+    });
+    const activePresentCount = checkedIn + checkedOut + present + late;
+    return {
+      checkedIn,
+      checkedOut,
+      present,
+      absent,
+      late,
+      leave,
+      activePresentCount,
+      total: activeDetails.length,
+    };
+  }, [activeDetails]);
+
+  // Filtered list of students in the register
+  const filteredDetails = useMemo(() => {
+    return activeDetails.filter((d) => {
+      const matchSearch =
+        d.studentName.toLowerCase().includes(search.toLowerCase()) ||
+        d.pinNumber.toLowerCase().includes(search.toLowerCase()) ||
+        (d.assignedTabletNumber && d.assignedTabletNumber.toLowerCase().includes(search.toLowerCase()));
+
+      const matchStd = selectedStandard === 'All' || d.standard === selectedStandard;
+      const matchCoaching =
+        selectedCoaching === 'All'
+          ? true
+          : selectedCoaching === 'Yes'
+          ? d.isCoachingStudent
+          : !d.isCoachingStudent;
+
+      const matchStatus =
+        selectedStatusFilter === 'All'
+          ? true
+          : d.status === selectedStatusFilter;
+
+      return matchSearch && matchStd && matchCoaching && matchStatus;
+    });
+  }, [activeDetails, search, selectedStandard, selectedCoaching, selectedStatusFilter]);
+
+  // Counts breakdown for Coaching vs Regular toggle
+  const coachingCounts = useMemo(() => {
+    const baseList = activeDetails.filter((d) => {
+      const matchSearch =
+        d.studentName.toLowerCase().includes(search.toLowerCase()) ||
+        d.pinNumber.toLowerCase().includes(search.toLowerCase()) ||
+        (d.assignedTabletNumber && d.assignedTabletNumber.toLowerCase().includes(search.toLowerCase()));
+      const matchStd = selectedStandard === 'All' || d.standard === selectedStandard;
+      const matchStatus = selectedStatusFilter === 'All' || d.status === selectedStatusFilter;
+      return matchSearch && matchStd && matchStatus;
+    });
+
+    const coaching = baseList.filter((d) => d.isCoachingStudent).length;
+    const regular = baseList.filter((d) => !d.isCoachingStudent).length;
+    const total = baseList.length;
+
+    return { total, coaching, regular };
+  }, [activeDetails, search, selectedStandard, selectedStatusFilter]);
+
+  // Search dropdown results for PIN/Name quick search box
+  const searchDropdownResults = useMemo(() => {
+    if (!searchBoxQuery.trim()) return [];
+    const query = searchBoxQuery.toLowerCase().trim();
+    const filtered = activeDetails.filter(
+      (d) =>
+        d.pinNumber.toLowerCase().includes(query) ||
+        d.studentName.toLowerCase().includes(query)
+    );
+    // Prioritize exact or prefix PIN matches
+    return filtered.sort((a, b) => {
+      const aPin = a.pinNumber.toLowerCase();
+      const bPin = b.pinNumber.toLowerCase();
+      if (aPin === query && bPin !== query) return -1;
+      if (bPin === query && aPin !== query) return 1;
+      if (aPin.startsWith(query) && !bPin.startsWith(query)) return -1;
+      if (bPin.startsWith(query) && !aPin.startsWith(query)) return 1;
+      return 0;
+    });
+  }, [searchBoxQuery, activeDetails]);
+
+  // Spotlight student details
+  const selectedStudentDetail = useMemo(() => {
+    if (!selectedStudentId) return null;
+    return activeDetails.find((d) => d.studentId === selectedStudentId) || null;
+  }, [selectedStudentId, activeDetails]);
+
+  // One-click Check-In Handler
+  const handleCheckIn = (studentId: string) => {
+    if (currentRecord.isLocked) {
+      setScanToast({ message: 'Register is locked against changes.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    const matched = activeDetails.find((d) => d.studentId === studentId);
+    if (!matched) return;
+
+    if (matched.status === 'Checked In') {
+      setScanToast({ message: `${matched.studentName} is ALREADY Checked In!`, type: 'info' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    const checkInTime = getCurrentTime12h();
+    const updated = activeDetails.map((d) => {
+      if (d.studentId === studentId) {
+        return {
+          ...d,
+          status: 'Checked In' as AttendanceStatus,
+          checkInTime,
+          checkOutTime: undefined,
+          totalDuration: calculateDuration(checkInTime, undefined, selectedDate),
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+
+    setActiveDetails(updated);
+    setScanToast({ message: `Checked In: ${matched.studentName} at ${checkInTime}`, type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // One-click Check-Out Handler
+  const handleCheckOut = (studentId: string) => {
+    if (currentRecord.isLocked) {
+      setScanToast({ message: 'Register is locked against changes.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    const matched = activeDetails.find((d) => d.studentId === studentId);
+    if (!matched) return;
+
+    if (matched.status === 'Checked Out') {
+      setScanToast({ message: `${matched.studentName} is ALREADY Checked Out!`, type: 'info' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    if (!matched.checkInTime) {
+      setScanToast({ message: `Cannot Check-Out: ${matched.studentName} has not Checked In yet!`, type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    const checkOutTime = getCurrentTime12h();
+    const durationStr = calculateDuration(matched.checkInTime, checkOutTime, selectedDate);
+
+    const updated = activeDetails.map((d) => {
+      if (d.studentId === studentId) {
+        return {
+          ...d,
+          status: 'Checked Out' as AttendanceStatus,
+          checkOutTime,
+          totalDuration: durationStr,
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+
+    setActiveDetails(updated);
+    setScanToast({ message: `Checked Out: ${matched.studentName} at ${checkOutTime} (Total: ${durationStr})`, type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Set general status (Present, Absent, Late, Leave)
+  const handleSetStatus = (studentId: string, status: AttendanceStatus) => {
+    if (currentRecord.isLocked) return;
+
+    const timeNow = getCurrentTime12h();
+    const updated = activeDetails.map((d) => {
+      if (d.studentId === studentId) {
+        let checkIn = d.checkInTime;
+        let checkOut = d.checkOutTime;
+
+        if (status === 'Present' || status === 'Late') {
+          if (!checkIn) checkIn = timeNow;
+        } else if (status === 'Absent' || status === 'Leave') {
+          checkIn = undefined;
+          checkOut = undefined;
+        }
+
+        return {
+          ...d,
+          status,
+          checkInTime: checkIn,
+          checkOutTime: checkOut,
+          totalDuration: calculateDuration(checkIn, checkOut, selectedDate),
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+
+    setActiveDetails(updated);
+  };
+
+  // Bulk Check-In All
+  const handleBulkCheckInAll = () => {
+    if (currentRecord.isLocked) return;
+    const timeNow = getCurrentTime12h();
+    const updated = activeDetails.map((d) => ({
+      ...d,
+      status: 'Checked In' as AttendanceStatus,
+      checkInTime: d.checkInTime || timeNow,
+      checkOutTime: undefined,
+      totalDuration: calculateDuration(d.checkInTime || timeNow, undefined, selectedDate),
+    }));
+    setActiveDetails(updated);
+    setScanToast({ message: 'All students Checked In successfully!', type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Open Bulk Check-Out Modal
+  const openBulkCheckOutModal = () => {
+    if (currentRecord.isLocked) {
+      setScanToast({ message: 'Register is locked against changes.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+    const checkedInStudents = activeDetails.filter((d) => d.status === 'Checked In').map((d) => d.studentId);
+    setSelectedBulkStudentIds(checkedInStudents);
+    setBulkCheckOutTime(getCurrentTime12h());
+    setModalSearchQuery('');
+    setIsBulkCheckOutModalOpen(true);
+  };
+
+  // Execute Bulk Check-Out with single confirmation
+  const executeBulkCheckOut = (targetStudentIds: string[], timeToUse: string, isAutomated: boolean = false) => {
+    if (currentRecord.isLocked) return;
+
+    const actualTime = timeToUse || getCurrentTime12h();
+    let count = 0;
+
+    const updated = activeDetails.map((d) => {
+      if (targetStudentIds.includes(d.studentId) && d.status === 'Checked In') {
+        count++;
+        const checkIn = d.checkInTime || '08:00 AM';
+        return {
+          ...d,
+          status: 'Checked Out' as AttendanceStatus,
+          checkOutTime: actualTime,
+          totalDuration: calculateDuration(checkIn, actualTime, selectedDate),
+          markedAt: new Date().toLocaleTimeString(),
+        };
+      }
+      return d;
+    });
+
+    setActiveDetails(updated);
+
+    // Save updated register automatically
+    const updatedRecord: DailyAttendanceRecord = {
+      ...currentRecord,
+      details: updated,
+      submittedBy: isAutomated ? 'System Auto Scheduler' : 'Dr. Rajesh Sharma',
+      submittedAt: `${new Date().toISOString().slice(0, 10)} ${new Date().toLocaleTimeString()}`,
+    };
+
+    const exists = attendanceRecords.some((r) => r.date === selectedDate);
+    const updatedList = exists
+      ? attendanceRecords.map((r) => (r.date === selectedDate ? updatedRecord : r))
+      : [updatedRecord, ...attendanceRecords];
+
+    onSaveAttendanceRecords(updatedList);
+
+    logAuditAction(
+      isAutomated ? 'System Background Scheduler' : 'System User',
+      activeRole,
+
+      'BULK_CHECK_OUT',
+      'Attendance',
+      `${isAutomated ? 'Automated end-of-day background' : 'Bulk'} checked out ${count} students at ${actualTime} for date ${selectedDate}`
+    );
+
+    setScanToast({
+      message: isAutomated
+        ? `⚡ Background Process: Automatically checked out ${count} remaining students at ${actualTime}!`
+        : `Successfully Bulk Checked Out ${count} students at ${actualTime}!`,
+      type: 'success',
+    });
+    setTimeout(() => setScanToast(null), 4000);
+
+    if (isAutomated) {
+      setAutoCheckOutExecutedForDate(selectedDate);
+    }
+
+    setIsBulkCheckOutModalOpen(false);
+  };
+
+  // Toggle Background Auto Check-Out
+  const handleToggleAutoCheckOut = (enabled: boolean) => {
+    setAutoCheckOutEnabled(enabled);
+    localStorage.setItem('auto_checkout_enabled', enabled ? 'true' : 'false');
+    setScanToast({
+      message: enabled
+        ? `Background Auto Check-Out Enabled for ${autoCheckOutTime}`
+        : 'Background Auto Check-Out Disabled',
+      type: 'info',
+    });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Change Background Auto Check-Out Time
+  const handleChangeAutoCheckOutTime = (time: string) => {
+    setAutoCheckOutTime(time);
+    localStorage.setItem('auto_checkout_time', time);
+  };
+
+  // Background End-of-Day Auto Check-Out Monitor Effect
+  useEffect(() => {
+    if (!autoCheckOutEnabled || currentRecord.isLocked || selectedDate !== todayStr) return;
+    if (autoCheckOutExecutedForDate === selectedDate) return;
+
+    const timer = setInterval(() => {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const targetMinutes = parseTimeStringToMinutes(autoCheckOutTime);
+
+      if (targetMinutes !== null && nowMinutes >= targetMinutes) {
+        const remainingIn = activeDetails.filter((d) => d.status === 'Checked In').map((d) => d.studentId);
+        if (remainingIn.length > 0) {
+          executeBulkCheckOut(remainingIn, autoCheckOutTime, true);
+        }
+      }
+    }, 10000);
+
+    return () => clearInterval(timer);
+  }, [
+    autoCheckOutEnabled,
+    autoCheckOutTime,
+    currentRecord.isLocked,
+    selectedDate,
+    todayStr,
+    activeDetails,
+    autoCheckOutExecutedForDate,
+  ]);
+
+  // Mark All Absent
+  const handleBulkAbsentAll = () => {
+    if (currentRecord.isLocked) return;
+    const updated = activeDetails.map((d) => ({
+      ...d,
+      status: 'Absent' as AttendanceStatus,
+      checkInTime: undefined,
+      checkOutTime: undefined,
+      totalDuration: '-',
+    }));
+    setActiveDetails(updated);
+    setScanToast({ message: 'Marked all students Absent.', type: 'info' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Save Attendance Register
+  const handleSaveAttendance = () => {
+    const updatedRecord: DailyAttendanceRecord = {
+      ...currentRecord,
+      details: activeDetails,
+      submittedBy: 'Dr. Rajesh Sharma',
+      submittedAt: `${new Date().toISOString().slice(0, 10)} ${new Date().toLocaleTimeString()}`,
+    };
+
+    const exists = attendanceRecords.some((r) => r.date === selectedDate);
+    const updatedList = exists
+      ? attendanceRecords.map((r) => (r.date === selectedDate ? updatedRecord : r))
+      : [updatedRecord, ...attendanceRecords];
+
+    onSaveAttendanceRecords(updatedList);
+    logAuditAction(
+      'System User',
+      activeRole,
+
+      'ATTENDANCE_SUBMITTED',
+      'Attendance',
+      `Saved digital attendance register for ${selectedDate} (${stats.checkedIn} Checked-In, ${stats.checkedOut} Checked-Out, ${stats.absent} Absent)`
+    );
+
+    setScanToast({ message: 'Attendance register saved & synced to system storage!', type: 'success' });
+    setTimeout(() => setScanToast(null), 3000);
+  };
+
+  // Lock / Unlock Attendance
+  const handleToggleLock = () => {
+    if (activeRole !== 'Super Admin' && activeRole !== 'Admin') {
+      alert('Only Admins and Super Admins can lock/unlock attendance records.');
+      return;
+    }
+
+    const newLockState = !currentRecord.isLocked;
+    const updatedRecord: DailyAttendanceRecord = {
+      ...currentRecord,
+      details: activeDetails,
+      isLocked: newLockState,
+      lockedAt: newLockState ? new Date().toLocaleString() : undefined,
+      lockedBy: newLockState ? 'Dr. Rajesh Sharma' : undefined,
+    };
+
+    const updatedList = attendanceRecords.map((r) => (r.date === selectedDate ? updatedRecord : r));
+    onSaveAttendanceRecords(updatedList);
+
+    logAuditAction(
+      'System User',
+      activeRole,
+
+      newLockState ? 'ATTENDANCE_LOCKED' : 'ATTENDANCE_UNLOCKED',
+      'Attendance',
+      `${newLockState ? 'Locked' : 'Unlocked'} digital attendance register for ${selectedDate}`
+    );
+  };
+
+  // Fast PIN Scanner Check-In/Out
+  const handleScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinScanInput.trim()) return;
+
+    if (currentRecord.isLocked) {
+      setScanToast({ message: 'Register is locked.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+
+    const rawPin = pinScanInput.trim().toUpperCase();
+    const pin = rawPin.startsWith('PIN-') ? rawPin : `PIN-${rawPin}`;
+
+    const matched = activeDetails.find((d) => d.pinNumber.toUpperCase() === pin || d.pinNumber.toUpperCase() === rawPin);
+
+    if (matched) {
+      if (matched.status === 'Checked In') {
+        handleCheckOut(matched.studentId);
+      } else {
+        handleCheckIn(matched.studentId);
+      }
+      setPinScanInput('');
+    } else {
+      setScanToast({ message: `Student PIN "${rawPin}" not found in current roster!`, type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+    }
+  };
+
+  // Save Remarks
+  const handleSaveRemark = () => {
+    if (!remarkStudent) return;
+    const updated = activeDetails.map((d) => (d.studentId === remarkStudent.id ? { ...d, remarks: tempRemark } : d));
+    setActiveDetails(updated);
+    setRemarkStudent(null);
+  };
+
+  // Export handlers
+  const handleExportExcel = () => {
+    const data = filteredDetails.map((d) => ({
+      Date: selectedDate,
+      'PIN Number': d.pinNumber,
+      'Student Name': d.studentName,
+      Standard: d.standard,
+      'Coaching Batch': d.isCoachingStudent ? 'Yes' : 'No',
+      'Assigned Tablet': d.assignedTabletNumber || 'None',
+      Status: d.status,
+      'Check-In Time': d.checkInTime || '-',
+      'Check-Out Time': d.checkOutTime || '-',
+      'Total Duration': calculateDuration(d.checkInTime, d.checkOutTime, selectedDate),
+      Remarks: d.remarks || '-',
+      'Logged At': d.markedAt,
+    }));
+    exportToExcel(data, `Attendance_Register_${selectedDate}`);
+  };
+
+  const handleExportPDF = () => {
+    generateDailyAttendancePDF({
+      selectedDate,
+      selectedStandard,
+      students,
+      attendanceRecords,
+    });
+    logAuditAction('System User', activeRole,
+ 'PDF_EXPORT', 'Attendance', `Exported Daily Attendance PDF Report for ${selectedDate}`);
+  };
+
+  // Compute student history across all records
+  const studentHistoryList = useMemo(() => {
+    if (!historyStudent) return [];
+    const list: { date: string; detail: AttendanceDetail }[] = [];
+
+    attendanceRecords.forEach((record) => {
+      const match = record.details.find((d) => d.studentId === historyStudent.id);
+      if (match) {
+        list.push({ date: record.date, detail: match });
+      }
+    });
+
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  }, [historyStudent, attendanceRecords]);
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6 pb-28 font-sans text-slate-800 relative min-h-screen">
+      
+      {/* Header */}
+      <div className="bg-white rounded-[24px] border border-slate-200/80 p-5 sm:p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-[18px] bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100/50 shrink-0">
+            <ClipboardCheck className="w-7 h-7" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Attendance</h1>
+            <p className="text-slate-500 font-medium mt-1 text-sm">Manage daily student attendance</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="relative group w-full md:w-auto">
+            <Calendar className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-indigo-400 group-hover:text-indigo-500 transition-colors" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="w-full md:w-auto pl-12 pr-5 py-3.5 rounded-[16px] border border-slate-200/80 bg-slate-50 font-bold text-slate-700 outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white transition-all cursor-pointer"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-3 sm:gap-5">
+        <div className="bg-white rounded-[20px] p-4 sm:p-5 border border-slate-200/80 shadow-sm flex flex-col items-center justify-center">
+          <span className="text-slate-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 sm:mb-2">Total</span>
+          <span className="text-2xl sm:text-3xl font-extrabold text-slate-800">{activeDetails.length}</span>
+        </div>
+        <div className="bg-white rounded-[20px] p-4 sm:p-5 border border-emerald-100 shadow-sm flex flex-col items-center justify-center relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+          <span className="text-emerald-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 sm:mb-2 relative z-10">Present</span>
+          <span className="text-2xl sm:text-3xl font-extrabold text-emerald-600 relative z-10">{stats.checkedIn + stats.checkedOut + stats.present + stats.late}</span>
+        </div>
+        <div className="bg-white rounded-[20px] p-4 sm:p-5 border border-rose-100 shadow-sm flex flex-col items-center justify-center relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+          <span className="text-rose-600 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 sm:mb-2 relative z-10">Absent</span>
+          <span className="text-2xl sm:text-3xl font-extrabold text-rose-600 relative z-10">{stats.absent + stats.leave}</span>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Search students by name or roll number..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-13 pr-6 py-4 rounded-[20px] border border-slate-200/80 bg-white shadow-sm text-slate-700 font-semibold outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-400 transition-all text-base placeholder:font-medium placeholder:text-slate-400"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 bg-slate-100 p-1.5 rounded-full transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
+      {scanToast && (
+        <div className={`p-4 rounded-[16px] font-bold text-sm flex items-center justify-center gap-2 shadow-sm ${scanToast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'}`}>
+          {scanToast.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          {scanToast.message}
+        </div>
+      )}
+
+      {/* Student List Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {filteredDetails.length === 0 ? (
+          <div className="col-span-full py-16 flex flex-col items-center justify-center text-slate-400 bg-white rounded-[24px] border border-slate-200/80 border-dashed">
+            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+              <Search className="w-8 h-8 text-slate-300" />
+            </div>
+            <p className="text-lg font-bold text-slate-600">No students found</p>
+            <p className="text-sm font-medium mt-1">Try adjusting your search criteria</p>
+          </div>
+        ) : (
+          filteredDetails.map((student) => {
+            const isPresent = student.status === 'Present' || student.status === 'Checked In' || student.status === 'Checked Out' || student.status === 'Late';
+            const isAbsent = student.status === 'Absent' || student.status === 'Leave';
+
+            return (
+              <div key={student.studentId} className="bg-white rounded-[24px] border border-slate-200/80 p-5 sm:p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col gap-6">
+                <div className="flex justify-between items-start gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-[17px] sm:text-lg font-bold text-slate-800 line-clamp-1 truncate">{student.studentName}</h3>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/50">Roll {student.pinNumber}</span>
+                      <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100/50">
+                        {student.standard} {student.isCoachingStudent && '• Coaching'}
+                      </span>
+                    </div>
+                  </div>
+                  {(isPresent || isAbsent) && (
+                    <div className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider shrink-0 shadow-sm border ${isPresent ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60' : 'bg-rose-50 text-rose-700 border-rose-200/60'}`}>
+                      {isPresent ? 'Present' : 'Absent'}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleSetStatus(student.studentId, 'Present')}
+                    disabled={currentRecord.isLocked}
+                    className={`flex-1 py-4 sm:py-3.5 rounded-[16px] flex items-center justify-center gap-2 font-bold text-[15px] transition-all disabled:opacity-50 active:scale-[0.98] ${
+                      isPresent 
+                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 ring-2 ring-emerald-500 ring-offset-2' 
+                        : 'bg-slate-50 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 border border-slate-200/80'
+                    }`}
+                  >
+                    <CheckCircle2 className={`w-5 h-5 ${isPresent ? 'text-white' : 'text-emerald-500'}`} />
+                    Present
+                  </button>
+                  <button
+                    onClick={() => handleSetStatus(student.studentId, 'Absent')}
+                    disabled={currentRecord.isLocked}
+                    className={`flex-1 py-4 sm:py-3.5 rounded-[16px] flex items-center justify-center gap-2 font-bold text-[15px] transition-all disabled:opacity-50 active:scale-[0.98] ${
+                      isAbsent 
+                        ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/25 ring-2 ring-rose-500 ring-offset-2' 
+                        : 'bg-slate-50 text-slate-500 hover:bg-rose-50 hover:text-rose-600 border border-slate-200/80'
+                    }`}
+                  >
+                    <XCircle className={`w-5 h-5 ${isAbsent ? 'text-white' : 'text-rose-500'}`} />
+                    Absent
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Sticky Bottom Bar */}
+      <div className="fixed bottom-0 left-0 right-0 lg:left-64 md:left-16 bg-white/95 backdrop-blur-xl border-t border-slate-200/80 p-4 z-40 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)] transition-all">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+          {onNavigate ? (
+            <button 
+              onClick={() => onNavigate('dashboard')}
+              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-[16px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span className="hidden sm:inline">Dashboard</span>
+            </button>
+          ) : <div />}
+          
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            {onNavigate && (
+              <button 
+                onClick={() => onNavigate('reports')}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 rounded-[16px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100/50 transition-colors"
+              >
+                <FileText className="w-5 h-5" />
+                <span className="hidden sm:inline">Reports</span>
+              </button>
+            )}
+            <button 
+              onClick={handleSaveAttendance}
+              disabled={currentRecord.isLocked}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-8 py-3.5 rounded-[16px] font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-600/25 transition-all disabled:opacity-50"
+            >
+              <Save className="w-5 h-5" />
+              Save Register
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Student Attendance History Modal */}
+      {historyStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                  <History className="w-4 h-4 text-indigo-600" />
+                  Attendance & Duration History: {historyStudent.name}
+                </h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  PIN: {historyStudent.pinNumber} • STD {historyStudent.standard}
+                </p>
+              </div>
+              <button
+                onClick={() => setHistoryStudent(null)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 max-h-[60vh] overflow-y-auto space-y-2.5">
+              {studentHistoryList.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 text-xs">
+                  No previous attendance records stored for this student.
+                </div>
+              ) : (
+                studentHistoryList.map(({ date, detail }) => {
+                  const duration = calculateDuration(detail.checkInTime, detail.checkOutTime, date);
+
+                  return (
+                    <div
+                      key={date}
+                      className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="font-bold text-slate-900 font-mono">
+                          {date}
+                        </div>
+                        <div className="text-slate-500 text-[11px] flex items-center gap-3 mt-1">
+                          <span>In: <strong>{detail.checkInTime || '-'}</strong></span>
+                          <span>Out: <strong>{detail.checkOutOutTime || detail.checkOutTime || '-'}</strong></span>
+                          <span>Duration: <strong className="text-indigo-600">{duration}</strong></span>
+                        </div>
+                        {detail.remarks && (
+                          <div className="text-[11px] text-slate-500 italic mt-1">
+                            Note: {detail.remarks}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          detail.status === 'Checked In' || detail.status === 'Present'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : detail.status === 'Checked Out'
+                            ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                            : detail.status === 'Absent'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {detail.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 text-right">
+              <button
+                onClick={() => setHistoryStudent(null)}
+                className="px-5 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer hover:bg-slate-800"
+              >
+                Close History
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Remarks Modal */}
+      {remarkStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm">
+                Edit Remarks: {remarkStudent.name}
+              </h3>
+              <button
+                onClick={() => setRemarkStudent(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <label className="block text-xs font-bold text-slate-700">
+                Attendance Remarks / Reasons (e.g. "Medical Leave", "Bus Late", "Tablet Repair")
+              </label>
+              <textarea
+                value={tempRemark}
+                onChange={(e) => setTempRemark(e.target.value)}
+                placeholder="Enter custom remarks..."
+                rows={3}
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-900 placeholder:text-slate-400 outline-none focus:border-indigo-600 focus:bg-white"
+              />
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                onClick={() => setRemarkStudent(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveRemark}
+                className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer hover:bg-indigo-700 shadow-md shadow-indigo-600/20"
+              >
+                Save Remarks
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End-of-Day Bulk Check-Out Modal */}
+      {isBulkCheckOutModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <LogOut className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-base text-white">End-of-Day Bulk Check-Out</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950 font-mono">
+                      {selectedBulkStudentIds.length} Students IN
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Mark all remaining 'IN' students as 'OUT' with a single confirmation
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBulkCheckOutModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              
+              {/* Info Banner */}
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-950 leading-relaxed">
+                  <strong>Confirm End-of-Day Departure:</strong> Checking out these students will update their status to <strong>Checked Out</strong>, set their departure time, calculate total campus duration, and save today's register automatically.
+                </div>
+              </div>
+
+              {/* Check-Out Time Selection */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-indigo-600" />
+                    <span>Select Departure Time for Bulk Check-Out</span>
+                  </label>
+                  
+                  {/* Quick Presets */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setBulkCheckOutTime(getCurrentTime12h())}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px] font-bold hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      Now ({getCurrentTime12h()})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkCheckOutTime('04:00 PM')}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px] font-bold hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      04:00 PM
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkCheckOutTime('05:00 PM')}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px] font-bold hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      05:00 PM
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={bulkCheckOutTime}
+                    onChange={(e) => setBulkCheckOutTime(e.target.value)}
+                    placeholder="e.g. 04:30 PM"
+                    className="px-3.5 py-2 bg-white rounded-xl border border-slate-300 text-xs font-mono font-bold text-slate-900 outline-none focus:border-indigo-600 w-44"
+                  />
+                  <span className="text-xs text-slate-500">
+                    Departure time applied to selected students.
+                  </span>
+                </div>
+              </div>
+
+              {/* Background Process Scheduler Box */}
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-indigo-600" />
+                    <span className="text-xs font-bold text-indigo-950">Background End-of-Day Auto Check-Out Scheduler</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoCheckOutEnabled}
+                      onChange={(e) => handleToggleAutoCheckOut(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                <p className="text-[11px] text-indigo-900/80 leading-relaxed">
+                  When enabled, a background process runs at the end of the school day to automatically check out any remaining 'IN' students at the configured target time.
+                </p>
+
+                {autoCheckOutEnabled && (
+                  <div className="flex items-center gap-3 pt-1 border-t border-indigo-200/60">
+                    <span className="text-xs font-semibold text-indigo-950">Daily Target Time:</span>
+                    <input
+                      type="text"
+                      value={autoCheckOutTime}
+                      onChange={(e) => handleChangeAutoCheckOutTime(e.target.value)}
+                      placeholder="e.g. 05:00 PM"
+                      className="px-3 py-1 bg-white rounded-lg border border-indigo-200 text-xs font-mono font-bold text-indigo-950 w-32 outline-none focus:border-indigo-600"
+                    />
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Scheduler Active
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Students Table / Preview */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800">
+                    Students Remaining Checked-In ({selectedBulkStudentIds.length} / {activeDetails.filter(d => d.status === 'Checked In').length})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allIn = activeDetails.filter(d => d.status === 'Checked In').map(d => d.studentId);
+                        setSelectedBulkStudentIds(allIn);
+                      }}
+                      className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-slate-300">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBulkStudentIds([])}
+                      className="text-[11px] font-bold text-slate-500 hover:underline cursor-pointer"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                </div>
+
+                {/* Modal Search Bar */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={modalSearchQuery}
+                    onChange={(e) => setModalSearchQuery(e.target.value)}
+                    placeholder="Filter remaining students..."
+                    className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:bg-white"
+                  />
+                </div>
+
+                {/* Student List Grid */}
+                <div className="max-h-52 overflow-y-auto border border-slate-200 rounded-2xl divide-y divide-slate-100 bg-white">
+                  {activeDetails.filter(d => d.status === 'Checked In').length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs font-medium">
+                      No students are currently Checked In!
+                    </div>
+                  ) : (
+                    activeDetails
+                      .filter(d => d.status === 'Checked In')
+                      .filter(d => 
+                        d.studentName.toLowerCase().includes(modalSearchQuery.toLowerCase()) ||
+                        d.pinNumber.toLowerCase().includes(modalSearchQuery.toLowerCase())
+                      )
+                      .map((d) => {
+                        const isSelected = selectedBulkStudentIds.includes(d.studentId);
+                        const duration = calculateDuration(d.checkInTime, bulkCheckOutTime, selectedDate);
+
+                        return (
+                          <div
+                            key={d.studentId}
+                            onClick={() => {
+                              setSelectedBulkStudentIds(prev => 
+                                prev.includes(d.studentId)
+                                  ? prev.filter(id => id !== d.studentId)
+                                  : [...prev, d.studentId]
+                              );
+                            }}
+                            className={`p-3 flex items-center justify-between text-xs cursor-pointer transition ${
+                              isSelected ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-slate-50 opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="w-4 h-4 rounded text-amber-600 cursor-pointer"
+                              />
+                              <span className="font-mono font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">
+                                {d.pinNumber}
+                              </span>
+                              <div>
+                                <span className="font-bold text-slate-900 block">{d.studentName}</span>
+                                <span className="text-[10px] text-slate-500">
+                                  Std {d.standard} {d.assignedTabletNumber ? `• ${d.assignedTabletNumber}` : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <div className="text-[11px] font-medium text-slate-600">
+                                In: <strong className="text-slate-900 font-mono">{d.checkInTime || '-'}</strong>
+                              </div>
+                              <div className="text-[10px] text-amber-700 font-bold font-mono">
+                                Duration: {duration}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Actions Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-600">
+                Selected: <strong className="text-slate-900">{selectedBulkStudentIds.length}</strong> students
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkCheckOutModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => executeBulkCheckOut(selectedBulkStudentIds, bulkCheckOutTime, false)}
+                  disabled={selectedBulkStudentIds.length === 0}
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold text-xs shadow-md shadow-amber-600/20 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Confirm Bulk Check-Out ({selectedBulkStudentIds.length})</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};

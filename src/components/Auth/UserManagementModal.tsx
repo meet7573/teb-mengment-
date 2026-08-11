@@ -47,9 +47,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   const filteredUsers = users.filter(
     (u) =>
-      u.fullName.toLowerCase().includes(search.toLowerCase()) ||
-      u.username.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase())
+      u.fullName?.toLowerCase()?.includes(search?.toLowerCase()) ||
+      u.username?.toLowerCase()?.includes(search?.toLowerCase()) ||
+      u.email?.toLowerCase()?.includes(search?.toLowerCase())
   );
 
   const handleAddUser = (e: React.FormEvent) => {
@@ -66,7 +66,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       return;
     }
 
-    if (users.some((u) => u.username.toLowerCase() === username.trim().toLowerCase())) {
+    if (users.some((u) => u.username?.toLowerCase() === username.trim()?.toLowerCase())) {
       setFormError('Username already exists. Please pick a unique username.');
       return;
     }

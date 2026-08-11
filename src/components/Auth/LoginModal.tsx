@@ -268,8 +268,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
           className="absolute inset-0 w-full h-full object-cover z-0"
         />
         <div className="relative z-20 text-center px-12 text-white flex flex-col items-center animate-in slide-in-from-bottom-4 duration-700 delay-150 fill-mode-both">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-md text-white font-extrabold text-3xl mb-6 shadow-inner border border-white/20">
-            <School className="w-10 h-10" />
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-md mb-6 shadow-inner border border-white/20 overflow-hidden">
+            <img src="/src/assets/images/school_management_logo_1785906402051.jpg" alt="Logo" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-4xl lg:text-5xl font-extrabold tracking-tight mb-4 drop-shadow-md">
             Attendance Management
@@ -286,8 +286,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
           
           {/* Mobile Header Branding */}
           <div className="md:hidden flex flex-col items-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl bg-blue-600 text-white font-extrabold text-2xl mb-4 shadow-lg">
-              <School className="w-8 h-8" />
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl overflow-hidden mb-4 shadow-lg border border-slate-200">
+              <img src="/src/assets/images/school_management_logo_1785906402051.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <h2 className="text-2xl font-extrabold text-slate-900 text-center">Attendance Management</h2>
           </div>

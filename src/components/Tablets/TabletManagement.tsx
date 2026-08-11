@@ -85,14 +85,14 @@ export const TabletManagement: React.FC<TabletManagementProps> = ({
   }, [tablets]);
 
   const handleScanSuccess = (rawText: string) => {
-    const cleanQuery = rawText.replace(/^(QR-|BC-)/i, '').trim().toLowerCase();
+    const cleanQuery = rawText.replace(/^(QR-|BC-)/i, '').trim()?.toLowerCase();
     
     // Find tablet by matching qrCode, barcode, tabletNumber, or id
     const matchedTablet = tablets.find((t) => {
-      const numClean = t.tabletNumber.toLowerCase();
-      const qrClean = t.qrCode.toLowerCase();
-      const bcClean = t.barcode.toLowerCase();
-      const rawLower = rawText.toLowerCase();
+      const numClean = t.tabletNumber?.toLowerCase();
+      const qrClean = t.qrCode?.toLowerCase();
+      const bcClean = t.barcode?.toLowerCase();
+      const rawLower = rawText?.toLowerCase();
 
       return (
         numClean === rawLower ||
@@ -137,11 +137,11 @@ export const TabletManagement: React.FC<TabletManagementProps> = ({
   const filteredTablets = useMemo(() => {
     return tablets.filter((t) => {
       const matchSearch =
-        t.tabletName.toLowerCase().includes(search.toLowerCase()) ||
-        t.tabletNumber.toLowerCase().includes(search.toLowerCase()) ||
-        t.model.toLowerCase().includes(search.toLowerCase()) ||
-        (t.assignedToStudentName && t.assignedToStudentName.toLowerCase().includes(search.toLowerCase())) ||
-        (t.boxNumber && t.boxNumber.toLowerCase().includes(search.toLowerCase()));
+        t.tabletName?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        t.tabletNumber?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        t.model?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        (t.assignedToStudentName && t.assignedToStudentName?.toLowerCase()?.includes(search?.toLowerCase())) ||
+        (t.boxNumber && t.boxNumber?.toLowerCase()?.includes(search?.toLowerCase()));
 
       const matchBrand = selectedBrand === 'All' || t.brand === selectedBrand;
       const matchStatus = selectedStatus === 'All' || t.status === selectedStatus;

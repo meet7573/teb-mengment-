@@ -24,6 +24,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_for_dev';
 let db: { users: any[] } = { users: [] };
 const dataDir = path.join(currentDir, 'data');
 const dbFile = path.join(dataDir, 'auth.json');
+let appDb: { students: any[], attendance: any[] } = { students: [], attendance: [] };
+const dbAppFile = path.join(dataDir, 'app_data.json');
+
+function saveAppDB() {
+  fs.writeFileSync(dbAppFile, JSON.stringify(appDb, null, 2));
+}
 
 async function setupDB() {
   if (!fs.existsSync(dataDir)) {
@@ -40,6 +46,17 @@ async function setupDB() {
   } else {
     fs.writeFileSync(dbFile, JSON.stringify(db));
   }
+
+  if (fs.existsSync(dbAppFile)) {
+    try {
+      appDb = JSON.parse(fs.readFileSync(dbAppFile, 'utf-8'));
+    } catch (e) {
+      appDb = { students: [], attendance: [] };
+    }
+  } else {
+    saveAppDB();
+  }
+  console.log('JSON Database initialized');
 
   // Seed default admin if not exists
   const adminExists = db.users.find(u => u.username === 'meetdevani');
@@ -338,6 +355,245 @@ app.post('/api/auth/reset-password', async (req, res) => {
     res.json({ message: 'Password updated successfully.' });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Students API
+app.get('/api/students', async (req, res) => {
+  try {
+    const students = [...appDb.students].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    res.json(students);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/students', async (req, res) => {
+  try {
+    const { pin_no, name, std, course } = req.body;
+    
+    if (appDb.students.some(s => s.pin_no === pin_no)) {
+      return res.status(400).json({ error: 'Student with this PIN already exists' });
+    }
+
+    appDb.students.push({
+      pin_no, name, std, course, created_at: new Date().toISOString()
+    });
+    saveAppDB();
+    
+    res.json({ message: 'Student added successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/students/:pin_no', async (req, res) => {
+  try {
+    const { pin_no } = req.params;
+    appDb.attendance = appDb.attendance.filter(a => a.student_id !== pin_no);
+    appDb.students = appDb.students.filter(s => s.pin_no !== pin_no);
+    saveAppDB();
+    res.json({ message: 'Student deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+async function checkAndSendAbsenceAlerts(studentId, date) {
+  const records = appDb.attendance
+    .filter(a => a.student_id === studentId)
+    .sort((a, b) => b.attendance_date.localeCompare(a.attendance_date));
+  
+  let consecutiveAbsences = 0;
+  for (const record of records) {
+    if (record.status === 'Absent') {
+      consecutiveAbsences++;
+    } else {
+      break;
+    }
+  }
+
+  // "More than three consecutive days" -> > 3 (so 4 or more)
+  if (consecutiveAbsences > 3) {
+    const student = appDb.students.find(s => s.pin_no === studentId);
+    if (student) {
+      const parentEmail = `parent_${studentId}@example.com`; // Mock email
+      const subject = `Absence Alert: ${student.name}`;
+      const text = `Dear Parent/Guardian,\n\nThis is an automated alert. Your ward, ${student.name}, has been marked absent for ${consecutiveAbsences} consecutive days as of ${date}. Please contact the administration.\n\nRegards,\nAttendance System`;
+      
+      // We will only send this if we haven't sent it recently.
+      // To keep it simple, we just call sendMail here.
+      await sendMail(parentEmail, subject, text);
+    }
+  }
+}
+
+// Attendance API
+app.get('/api/attendance/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    
+    const result = appDb.students.map((student) => {
+      const record = appDb.attendance.find((r) => r.student_id === student.pin_no && r.attendance_date === date);
+      return {
+        ...student,
+        status: record ? record.status : 'Absent'
+      };
+    });
+    
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/attendance', async (req, res) => {
+  try {
+    const { date, attendance } = req.body;
+    
+    for (const record of attendance) {
+      const existing = appDb.attendance.find(a => a.student_id === record.pin_no && a.attendance_date === date);
+      if (existing) {
+        existing.status = record.status;
+      } else {
+        appDb.attendance.push({
+          id: Date.now() + Math.random(),
+          student_id: record.pin_no,
+          attendance_date: date,
+          status: record.status,
+          created_at: new Date().toISOString()
+        });
+      }
+    }
+    
+    saveAppDB();
+    for (const record of attendance) {
+      if (record.status === 'Absent') {
+         await checkAndSendAbsenceAlerts(record.pin_no, date);
+      }
+    }
+    res.json({ message: 'Attendance saved successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/reports', async (req, res) => {
+  try {
+    const datesRaw = Array.from(new Set(appDb.attendance.map(a => a.attendance_date))).sort((a, b) => b.localeCompare(a)).slice(0, 30);
+    
+    const reports = [];
+    
+    for (const date of datesRaw) {
+      const records = appDb.attendance.filter((r) => r.attendance_date === date);
+      const present = records.filter((r) => r.status === 'Present').length;
+      const absent = records.filter((r) => r.status === 'Absent').length;
+      const total = present + absent;
+      const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+      
+      reports.push({
+        date,
+        present,
+        absent,
+        total,
+        percentage
+      });
+    }
+    
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/sync/students', async (req, res) => {
+  try {
+    const students = req.body;
+    appDb.students = [];
+    for (const student of students) {
+      appDb.students.push({
+        pin_no: student.pinNumber, 
+        name: student.name, 
+        std: student.standard, 
+        course: student.isCoachingStudent ? 'Coaching' : 'Regular', 
+        created_at: student.createdAt || new Date().toISOString()
+      });
+    }
+    saveAppDB();
+    res.json({ message: 'Students synced successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/sync/attendance', async (req, res) => {
+  try {
+    const records = req.body; 
+    appDb.attendance = [];
+    for (const record of records) {
+      const date = record.date;
+      for (const detail of record.details) {
+        appDb.attendance.push({
+          id: Date.now() + Math.random(),
+          student_id: detail.studentId,
+          attendance_date: date,
+          status: detail.status,
+          created_at: new Date().toISOString()
+        });
+      }
+    }
+    saveAppDB();
+    const checked = new Set();
+    for (const record of records) {
+      const date = record.date;
+      for (const detail of record.details) {
+         if (detail.status === 'Absent' && !checked.has(detail.studentId)) {
+           checked.add(detail.studentId);
+           await checkAndSendAbsenceAlerts(detail.studentId, date);
+         }
+      }
+    }
+    res.json({ message: 'Attendance synced successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/sync/all', async (req, res) => {
+  try {
+    const students = appDb.students.map((d) => ({
+      id: d.pin_no, 
+      pinNumber: d.pin_no,
+      name: d.name,
+      standard: d.std,
+      isCoachingStudent: d.course === 'Coaching',
+      status: 'Active',
+      createdAt: d.created_at
+    }));
+
+    const attendanceMap = new Map();
+    for (const row of appDb.attendance) {
+      if (!attendanceMap.has(row.attendance_date)) {
+        attendanceMap.set(row.attendance_date, {
+          id: `att-${row.attendance_date}`,
+          date: row.attendance_date,
+          status: 'Submitted',
+          details: []
+        });
+      }
+      attendanceMap.get(row.attendance_date).details.push({
+        id: `det-${row.id}`,
+        studentId: row.student_id,
+        status: row.status,
+        timestamp: row.created_at
+      });
+    }
+    const attendanceRecords = Array.from(attendanceMap.values());
+
+    res.json({ students, attendanceRecords });
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });

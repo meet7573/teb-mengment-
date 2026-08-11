@@ -113,24 +113,24 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
   // Search dropdown results matching PIN or Name
   const searchDropdownStudents = useMemo(() => {
     if (!assignSearch.trim() || !assigningBox) return [];
-    const query = assignSearch.toLowerCase().trim();
+    const query = assignSearch?.toLowerCase().trim();
 
     const filtered = availableStudentsForAssign.filter((student) => {
       // Hide students already in selection box
       if (selectedStudentIdsToAssign.includes(student.id)) return false;
 
-      const rawPin = student.pinNumber.toLowerCase();
+      const rawPin = student.pinNumber?.toLowerCase();
       const cleanPin = rawPin.replace(/^pin-?/, '');
-      const nameMatch = student.name.toLowerCase().includes(query);
+      const nameMatch = student.name?.toLowerCase()?.includes(query);
       const pinMatch = rawPin.includes(query) || cleanPin.includes(query);
-      const stdMatch = student.standard.toLowerCase().includes(query);
+      const stdMatch = student.standard?.toLowerCase()?.includes(query);
 
       return pinMatch || nameMatch || stdMatch;
     });
 
     return filtered.sort((a, b) => {
-      const aPin = a.pinNumber.toLowerCase().replace(/^pin-?/, '');
-      const bPin = b.pinNumber.toLowerCase().replace(/^pin-?/, '');
+      const aPin = a.pinNumber?.toLowerCase().replace(/^pin-?/, '');
+      const bPin = b.pinNumber?.toLowerCase().replace(/^pin-?/, '');
       if (aPin === query && bPin !== query) return -1;
       if (bPin === query && aPin !== query) return 1;
       if (aPin.startsWith(query) && !bPin.startsWith(query)) return -1;
@@ -219,17 +219,17 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
 
     // Search filter
     if (search.trim()) {
-      const query = search.toLowerCase().trim();
+      const query = search?.toLowerCase().trim();
       result = result.filter((b) => {
         const matchMeta =
-          b.boxNumber.toLowerCase().includes(query) ||
-          b.boxName.toLowerCase().includes(query) ||
-          b.location.toLowerCase().includes(query);
+          b.boxNumber?.toLowerCase()?.includes(query) ||
+          b.boxName?.toLowerCase()?.includes(query) ||
+          b.location?.toLowerCase()?.includes(query);
         const matchTablet = b.tablets.some(
           (t) =>
-            t.tabletNumber.toLowerCase().includes(query) ||
-            t.tabletName.toLowerCase().includes(query) ||
-            t.model.toLowerCase().includes(query)
+            t.tabletNumber?.toLowerCase()?.includes(query) ||
+            t.tabletName?.toLowerCase()?.includes(query) ||
+            t.model?.toLowerCase()?.includes(query)
         );
         return matchMeta || matchTablet;
       });
@@ -678,13 +678,13 @@ export const TabletBoxManagement: React.FC<TabletBoxManagementProps> = ({
   // Filtered list of unboxed tablets for Assign Modal
   const filteredUnboxedTablets = useMemo(() => {
     if (!assignSearch.trim()) return unboxedTablets;
-    const q = assignSearch.toLowerCase().trim();
+    const q = assignSearch?.toLowerCase().trim();
     return unboxedTablets.filter(
       (t) =>
-        t.tabletNumber.toLowerCase().includes(q) ||
-        t.tabletName.toLowerCase().includes(q) ||
-        t.brand.toLowerCase().includes(q) ||
-        t.model.toLowerCase().includes(q)
+        t.tabletNumber?.toLowerCase()?.includes(q) ||
+        t.tabletName?.toLowerCase()?.includes(q) ||
+        t.brand?.toLowerCase()?.includes(q) ||
+        t.model?.toLowerCase()?.includes(q)
     );
   }, [unboxedTablets, assignSearch]);
 

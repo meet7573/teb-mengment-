@@ -96,8 +96,8 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
   const filteredStudents = useMemo(() => {
     let list = students.filter((s) => {
       const matchSearch =
-        s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.pinNumber.toLowerCase().includes(search.toLowerCase());
+        s.name?.toLowerCase()?.includes(search?.toLowerCase()) ||
+        s.pinNumber?.toLowerCase()?.includes(search?.toLowerCase());
 
       const matchStd = selectedStandard === 'All' || s.standard === selectedStandard;
       const matchCoaching =
@@ -278,7 +278,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
 
         const rawCoaching = String(
           row['Coaching Batch'] || row['Coaching Student'] || row['Coaching'] || row['isCoaching'] || ''
-        ).trim().toLowerCase();
+        ).trim()?.toLowerCase();
 
         const rawStatus = String(
           row['Status'] || row['status'] || 'Active'
@@ -329,7 +329,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
         const isCoachingStudent = ['yes', 'true', '1', 'coaching'].includes(rawCoaching);
 
         // Normalize Status
-        const status: 'Active' | 'Inactive' = rawStatus.toLowerCase().includes('inact') ? 'Inactive' : 'Active';
+        const status: 'Active' | 'Inactive' = rawStatus?.toLowerCase()?.includes('inact') ? 'Inactive' : 'Active';
 
         const newStudent: Student = {
           id: `stu-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -397,10 +397,10 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
   };
 
   return (
-    <div className="space-y-6 w-full">
+    <div className="space-y-4 w-full">
       
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Users className="w-6 h-6 text-indigo-600" />
@@ -453,27 +453,27 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
       </div>
 
       {/* Metrics Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-2xs">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="p-5 bg-white rounded-3xl border border-slate-200 shadow-sm">
           <span className="text-xs font-medium text-slate-500 block">Total Students</span>
           <span className="text-2xl font-black text-slate-900 font-mono mt-1 block">{studentStats.total}</span>
         </div>
-        <div className="p-4 bg-white rounded-2xl border border-emerald-200/80 shadow-2xs">
+        <div className="p-5 bg-white rounded-3xl border border-emerald-200 shadow-sm">
           <span className="text-xs font-semibold text-emerald-700 block">Active Students</span>
           <span className="text-2xl font-black text-emerald-600 font-mono mt-1 block">{studentStats.active}</span>
         </div>
-        <div className="p-4 bg-white rounded-2xl border border-amber-200/80 shadow-2xs">
+        <div className="p-5 bg-white rounded-3xl border border-amber-200 shadow-sm">
           <span className="text-xs font-semibold text-amber-700 block">Coaching Batch</span>
           <span className="text-2xl font-black text-amber-600 font-mono mt-1 block">{studentStats.coaching}</span>
         </div>
-        <div className="p-4 bg-white rounded-2xl border border-rose-200/80 shadow-2xs">
+        <div className="p-5 bg-white rounded-3xl border border-rose-200 shadow-sm">
           <span className="text-xs font-semibold text-rose-700 block">Inactive Students</span>
           <span className="text-2xl font-black text-rose-600 font-mono mt-1 block">{studentStats.inactive}</span>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
+      <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
         
         {/* Search */}
         <div className="relative w-full md:w-80">
@@ -543,24 +543,24 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
       </div>
 
       {/* Student Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-600 font-bold uppercase tracking-wider border-b border-slate-200">
-                <th className="py-3.5 px-4">Student Info</th>
-                <th className="py-3.5 px-4">PIN Number</th>
-                <th className="py-3.5 px-4">Standard</th>
-                <th className="py-3.5 px-4">Coaching Batch</th>
-                <th className="py-3.5 px-4">Assigned Tablet</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
+                <th className="py-4 px-6 text-left">Student Info</th>
+                <th className="py-4 px-6 text-center">PIN Number</th>
+                <th className="py-4 px-6 text-center">Standard</th>
+                <th className="py-4 px-6 text-center">Coaching Batch</th>
+                <th className="py-4 px-6 text-center">Assigned Tablet</th>
+                <th className="py-4 px-6 text-center">Status</th>
+                <th className="py-4 px-6 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">
+                  <td colSpan={7} className="py-20 text-center text-slate-500 font-semibold bg-slate-50/50">
                     No student records found matching search filters.
                   </td>
                 </tr>
@@ -569,7 +569,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                   <tr key={s.id} className="hover:bg-slate-50/80 transition">
                     
                     {/* Student Name */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-left">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-700 font-bold flex items-center justify-center text-xs shrink-0 border border-indigo-100">
                           {s.name.charAt(0)}
@@ -582,34 +582,34 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                     </td>
 
                     {/* PIN */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-center">
                       <span className="font-mono font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
                         {s.pinNumber}
                       </span>
                     </td>
 
                     {/* Standard */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-center">
                       <span className="font-semibold text-slate-800">
                         {s.standard}
                       </span>
                     </td>
 
                     {/* Coaching Tag */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-center">
                       {s.isCoachingStudent ? (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                           Coaching Student
                         </span>
                       ) : (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">
+                        <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
                           Regular Batch
                         </span>
                       )}
                     </td>
 
                     {/* Assigned Tablet */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-center">
                       {s.assignedTabletNumber ? (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-700 font-bold border border-blue-200">
                           <Tablet className="w-3.5 h-3.5 text-blue-500" />
@@ -618,7 +618,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                       ) : (
                         <button
                           onClick={() => onQuickAssignTablet(s)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer border border-slate-200"
+                          className="mx-auto px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200 shadow-sm"
                         >
                           <Tablet className="w-3 h-3" />
                           <span>+ Assign Tablet</span>
@@ -627,7 +627,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                     </td>
 
                     {/* Status */}
-                    <td className="py-3.5 px-4">
+                    <td className="py-4 px-6 text-center">
                       {s.status === 'Active' ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Active
@@ -640,8 +640,8 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                     </td>
 
                     {/* Actions */}
-                    <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                    <td className="py-4 px-6 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => handleOpenEdit(s)}
                           className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition cursor-pointer"

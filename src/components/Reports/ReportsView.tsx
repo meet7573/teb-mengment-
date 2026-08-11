@@ -13,6 +13,16 @@ import {
   Percent,
   Download
 } from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer 
+} from 'recharts';
 import { Student, Tablet as TabletType, TabletBox, DailyAttendanceRecord, UserRole } from '../../types';
 import { exportToExcel, exportToPDF, generateDailyAttendancePDF, printDocument } from '../../utils/exportUtils';
 import { logAuditAction } from '../../utils/storage';
@@ -108,7 +118,43 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     return { total, present, absent, rate };
   }, [dailyReportData]);
 
-  // Compute Generic Report Data based on other reportTypes
+  // Calculate trend data for the last 30 days
+  const trendData = useMemo(() => {
+    // Sort all records by date
+    const sortedRecords = [...attendanceRecords].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // Take the last 30 days
+    const last30Days = sortedRecords.slice(-30);
+    
+    return last30Days.map(record => {
+      let present = 0;
+      let absent = 0;
+      
+      record.details.forEach(detail => {
+        if (
+          detail.status === 'Present' ||
+          detail.status === 'Checked In' ||
+          detail.status === 'Checked Out' ||
+          detail.status === 'Late' ||
+          (detail.checkInTime && detail.checkInTime !== '-')
+        ) {
+          present++;
+        } else {
+          absent++;
+        }
+      });
+      
+      // format date to "MMM DD"
+      const dateObj = new Date(record.date);
+      const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      return {
+        date: formattedDate,
+        present,
+        absent
+      };
+    });
+  }, [attendanceRecords]);
   const reportData = useMemo(() => {
     switch (reportType) {
       case 'Daily':
@@ -438,6 +484,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* 30 Days Attendance Trends Chart */}
+      {reportType === 'Daily' && trendData.length > 0 && (
+        <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-indigo-600" />
+              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
+                Daily Attendance Trends (Last 30 Days)
+              </h3>
+            </div>
+          </div>
+          
+          <div className="w-full h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                <XAxis 
+                  dataKey="date" 
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 10, fill: '#64748B' }}
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 10, fill: '#64748B' }}
+                />
+                <Tooltip 
+                  cursor={{ fill: '#F1F5F9' }}
+                  contentStyle={{ borderRadius: '12px', border: '1px solid #E2E8F0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                  labelStyle={{ fontSize: '12px', color: '#64748B', marginBottom: '4px' }}
+                />
+                <Legend 
+                  wrapperStyle={{ fontSize: '11px', fontWeight: '600', paddingTop: '10px' }}
+                  iconType="circle"
+                />
+                <Bar dataKey="present" name="Present" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="absent" name="Absent" fill="#F43F5E" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 

@@ -75,9 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Top Header / Branding */}
       <div className={`p-3.5 border-b border-slate-100 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
         <div className="flex items-center gap-3 overflow-hidden">
-          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-black text-xs flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0">
-            AMS
-          </div>
+          <img src="/src/assets/images/school_management_logo_1785906402051.jpg" alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-md shrink-0" />
           {!collapsed && (
             <div className="min-w-0">
               <h1 className="text-xs font-black text-slate-900 tracking-tight uppercase truncate">Attendance OS</h1>

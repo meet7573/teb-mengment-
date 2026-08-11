@@ -49,11 +49,43 @@ function MainApp() {
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
 
   // Data State
-  const [students, setStudentsState] = useState<Student[]>(getStudents);
+  const [students, setStudentsState] = useState<Student[]>([]);
   const [tablets, setTabletsState] = useState<Tablet[]>(getTablets);
   const [boxes, setBoxesState] = useState<TabletBox[]>(getTabletBoxes);
   const [assignments, setAssignmentsState] = useState<TabletAssignment[]>(getAssignments);
   const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>(getAttendanceRecords);
+
+  // Fetch initial data from SQLite backend
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await fetch('/api/sync/all');
+        if (res.ok) {
+          const data = await res.json();
+          const mappedStudents: Student[] = data.students.map((d: any) => ({
+            id: d.id,
+            pinNumber: d.pinNumber,
+            name: d.name,
+            standard: d.standard as any,
+            isCoachingStudent: d.isCoachingStudent,
+            status: d.status,
+            createdAt: d.createdAt
+          }));
+          setStudentsState(mappedStudents);
+          setAttendanceRecordsState(data.attendanceRecords);
+          
+          // Also persist back to localStorage just in case UI expects it
+          saveStudents(mappedStudents);
+          saveAttendanceRecords(data.attendanceRecords);
+        }
+      } catch (err) {
+        console.error('Failed to fetch data:', err);
+      }
+    };
+    if (currentUser) {
+      fetchData();
+    }
+  }, [currentUser]);
 
   // Quick Pre-selection state for Tablet Assignment
   const [preselectedStudent, setPreselectedStudent] = useState<Student | null>(null);
@@ -68,7 +100,7 @@ function MainApp() {
   // Keyboard Shortcut ⌘K for Search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') {
         e.preventDefault();
         setIsSearchOpen(true);
       }
@@ -97,9 +129,16 @@ function MainApp() {
   };
 
   // Data Save Handlers
-  const handleSaveStudents = (updated: Student[]) => {
+  const handleSaveStudents = async (updated: Student[]) => {
     setStudentsState(updated);
     saveStudents(updated);
+    try {
+      await fetch('/api/sync/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+    } catch (e) { console.error('Failed to sync students', e); }
   };
 
   const handleSaveTablets = (updated: Tablet[]) => {
@@ -118,9 +157,16 @@ function MainApp() {
     saveAssignments(updated);
   };
 
-  const handleSaveAttendance = (updated: DailyAttendanceRecord[]) => {
+  const handleSaveAttendance = async (updated: DailyAttendanceRecord[]) => {
     setAttendanceRecordsState(updated);
     saveAttendanceRecords(updated);
+    try {
+      await fetch('/api/sync/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+    } catch (e) { console.error('Failed to sync attendance', e); }
   };
 
   // Reset to seed defaults or clean data
@@ -167,6 +213,7 @@ function MainApp() {
         setCollapsed={setSidebarCollapsed}
         currentUser={currentUser}
         activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
         setActiveRole={handleRoleChange}
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
@@ -176,7 +223,7 @@ function MainApp() {
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 transition-all duration-300 p-4 sm:p-6 lg:p-8 w-full min-h-screen ${
+      <main className={`flex-1 transition-all duration-300 p-4 sm:p-6 w-full min-h-screen ${
         sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'
       }`}>
           
@@ -196,6 +243,7 @@ function MainApp() {
               attendanceRecords={attendanceRecords}
               onSaveAttendanceRecords={handleSaveAttendance}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
             />
           )}
 
@@ -204,6 +252,7 @@ function MainApp() {
               students={students}
               onSaveStudents={handleSaveStudents}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
               onQuickAssignTablet={handleQuickAssignFromStudent}
             />
           )}
@@ -217,6 +266,7 @@ function MainApp() {
               onSaveTablets={handleSaveTablets}
               onSaveStudents={handleSaveStudents}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
             />
           )}
 
@@ -228,6 +278,7 @@ function MainApp() {
               onSaveTablets={handleSaveTablets}
               onSaveBoxes={handleSaveBoxes}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
               onQuickAssign={handleQuickAssignFromTablet}
             />
           )}
@@ -241,6 +292,7 @@ function MainApp() {
               onSaveStudents={handleSaveStudents}
               onSaveTablets={handleSaveTablets}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
               preselectedStudentForAssign={preselectedStudent}
               preselectedTabletForAssign={preselectedTablet}
               onClearPreselections={() => {
@@ -257,12 +309,14 @@ function MainApp() {
               boxes={boxes}
               attendanceRecords={attendanceRecords}
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
             />
           )}
 
           {activeTab === 'settings' && (
             <SettingsView
               activeRole={activeRole}
+              onNavigate={(tab) => setActiveTab(tab)}
               onRoleChange={handleRoleChange}
               onResetData={handleResetData}
             />

@@ -23,16 +23,16 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
 
   const searchResults: GlobalSearchResult[] = useMemo(() => {
     if (!query.trim()) return [];
-    const q = query.toLowerCase().trim();
+    const q = query?.toLowerCase().trim();
     const results: GlobalSearchResult[] = [];
 
     // Search Students
     students.forEach(s => {
       if (
-        s.name.toLowerCase().includes(q) ||
-        s.pinNumber.toLowerCase().includes(q) ||
-        s.pinNumber.toLowerCase().replace(/^pin-?/, '').includes(q) ||
-        s.standard.toLowerCase().includes(q)
+        s.name?.toLowerCase()?.includes(q) ||
+        s.pinNumber?.toLowerCase()?.includes(q) ||
+        s.pinNumber?.toLowerCase().replace(/^pin-?/, '').includes(q) ||
+        s.standard?.toLowerCase()?.includes(q)
       ) {
         results.push({
           id: s.id,
@@ -48,10 +48,10 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     // Search Tablets
     tablets.forEach(t => {
       if (
-        t.tabletName.toLowerCase().includes(q) ||
-        t.tabletNumber.toLowerCase().includes(q) ||
-        t.brand.toLowerCase().includes(q) ||
-        t.model.toLowerCase().includes(q)
+        t.tabletName?.toLowerCase()?.includes(q) ||
+        t.tabletNumber?.toLowerCase()?.includes(q) ||
+        t.brand?.toLowerCase()?.includes(q) ||
+        t.model?.toLowerCase()?.includes(q)
       ) {
         results.push({
           id: t.id,
@@ -67,9 +67,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     // Search Boxes
     boxes.forEach(b => {
       if (
-        b.boxNumber.toLowerCase().includes(q) ||
-        b.boxName.toLowerCase().includes(q) ||
-        b.location.toLowerCase().includes(q)
+        b.boxNumber?.toLowerCase()?.includes(q) ||
+        b.boxName?.toLowerCase()?.includes(q) ||
+        b.location?.toLowerCase()?.includes(q)
       ) {
         results.push({
           id: b.id,
