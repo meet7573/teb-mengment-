@@ -1,33 +1,40 @@
-import { collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, writeBatch } from 'firebase/firestore';
-import { db } from './firebase';
 import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, AuditLog } from '../types';
 
+// Simple event emitter for localStorage sync
+const listeners: Record<string, Set<(data: any[]) => void>> = {};
+
+function notifyListeners(collectionName: string, data: any[]) {
+  if (listeners[collectionName]) {
+    listeners[collectionName].forEach(callback => callback(data));
+  }
+}
+
+function getLocalData(collectionName: string): any[] {
+  const data = localStorage.getItem(`db_\${collectionName}`);
+  return data ? JSON.parse(data) : [];
+}
+
+function setLocalData(collectionName: string, data: any[]) {
+  localStorage.setItem(`db_\${collectionName}`, JSON.stringify(data));
+  notifyListeners(collectionName, data);
+}
+
 export function subscribeToCollection<T>(collectionName: string, callback: (data: T[]) => void) {
-  return onSnapshot(collection(db, collectionName), (snapshot) => {
-    const data = snapshot.docs.map(doc => doc.data() as T);
-    callback(data);
-  });
+  if (!listeners[collectionName]) {
+    listeners[collectionName] = new Set();
+  }
+  listeners[collectionName].add(callback);
+  
+  // Initial load
+  callback(getLocalData(collectionName));
+  
+  // Return unsubscribe function
+  return () => {
+    listeners[collectionName].delete(callback);
+  };
 }
 
 export async function syncCollection<T extends { id: string }>(collectionName: string, current: T[], updated: T[]) {
-  const batch = writeBatch(db);
-  const currentIds = new Set(current.map(i => i.id));
-  const updatedIds = new Set(updated.map(i => i.id));
-  
-  // Insert / Update
-  for (const item of updated) {
-    const existing = current.find(i => i.id === item.id);
-    if (!existing || JSON.stringify(existing) !== JSON.stringify(item)) {
-      batch.set(doc(db, collectionName, item.id), item);
-    }
-  }
-  
-  // Delete
-  for (const id of currentIds) {
-    if (!updatedIds.has(id)) {
-      batch.delete(doc(db, collectionName, id));
-    }
-  }
-  
-  await batch.commit();
+  // We simply replace the whole collection with `updated` in localStorage
+  setLocalData(collectionName, updated);
 }

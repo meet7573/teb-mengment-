@@ -1,6 +1,4 @@
 import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, AuditLog, UserRole } from '../types';
-import { db } from '../lib/firebase';
-import { collection, setDoc, doc, getDocs, writeBatch } from 'firebase/firestore';
 
 const KEYS = {
   THEME: 'stm_theme_v3',
@@ -16,15 +14,12 @@ export function saveStoredRole(role: UserRole) {
   localStorage.setItem(KEYS.ACTIVE_ROLE, role);
 }
 
-// Global Reset - wipes Firestore
+// Global Reset - wipes localStorage
 export async function clearAllDatabase() {
-  const batch = writeBatch(db);
   const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs'];
   for (const c of collections) {
-    const snap = await getDocs(collection(db, c));
-    snap.docs.forEach(d => batch.delete(d.ref));
+    localStorage.removeItem(`db_${c}`);
   }
-  await batch.commit();
 }
 
 export async function logAuditAction(userName: string, userRole: UserRole, action: string, module: AuditLog['module'], details: string) {
@@ -37,7 +32,9 @@ export async function logAuditAction(userName: string, userRole: UserRole, actio
     module,
     details,
   };
-  await setDoc(doc(db, 'auditLogs', newLog.id), newLog);
+  const currentLogs = JSON.parse(localStorage.getItem('db_auditLogs') || '[]');
+  currentLogs.push(newLog);
+  localStorage.setItem('db_auditLogs', JSON.stringify(currentLogs));
 }
 
 // We need a helper for capacity checks that queries firestore, but since it's used synchronously we can fetch the local state from App.tsx instead.

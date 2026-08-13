@@ -9,9 +9,6 @@ import {
   School
 } from 'lucide-react';
 import { AppUser, setCurrentUser } from '../../utils/auth';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { auth, db } from '../../lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { UserRole } from '../../types';
 
 interface LoginModalProps {
@@ -49,6 +46,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
 
 
   
+  
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -57,21 +55,31 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
       setErrorMsg('Please enter both Email and Password.');
       return;
     }
+    
+    // Basic email validation if it looks like an email
+    if (usernameOrEmail.includes('@') && !/^[^s@]+@[^s@]+.[^s@]+$/.test(usernameOrEmail)) {
+      setErrorMsg('Please enter a valid email.');
+      return;
+    }
+
     try {
       setLoading(true);
-      const userCred = await signInWithEmailAndPassword(auth, usernameOrEmail, password);
-      const userDoc = await getDoc(doc(db, 'users', userCred.user.uid));
+      // Simulate network request
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      const users: AppUser[] = JSON.parse(localStorage.getItem('db_users') || '[]');
+      const user = users.find(u => (u.email === usernameOrEmail || u.username === usernameOrEmail) && u.password === password);
+      
       setLoading(false);
-      if (userDoc.exists()) {
-        const userData = userDoc.data() as AppUser;
-        if (userData.status === 'Inactive') {
+      if (user) {
+        if (user.status === 'Inactive') {
           setErrorMsg('Account is disabled.');
         } else {
-          setCurrentUser(userData);
-          onLoginSuccess(userData);
+          setCurrentUser(user);
+          onLoginSuccess(user);
         }
       } else {
-        setErrorMsg('User profile not found in database.');
+        setErrorMsg('Invalid email or password.');
       }
     } catch (err: any) {
       setLoading(false);
@@ -79,12 +87,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onLoginSuccess }
     }
   };
 
-  const handleResendVerify = async () => {};
-
-if (!isOpen) return null;
-
-  
-  const handleForgotSubmit = async (e: React.FormEvent) => {
+const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -104,28 +107,60 @@ if (!isOpen) return null;
     e.preventDefault();
   };
 
+  
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
+    
+    if (!regEmail.trim() || !regPassword.trim() || !regFullName.trim() || !regUsername.trim()) {
+      setErrorMsg('All fields are required.');
+      return;
+    }
+    
+    if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(regEmail)) {
+      setErrorMsg('Please enter a valid email.');
+      return;
+    }
+
     if (regPassword !== regConfirmPassword) {
       setErrorMsg('Passwords do not match.');
       return;
     }
+    
     try {
       setLoading(true);
-      const userCred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
+      // Simulate network request
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      const users: AppUser[] = JSON.parse(localStorage.getItem('db_users') || '[]');
+      if (users.find(u => u.email === regEmail)) {
+        setLoading(false);
+        setErrorMsg('Email is already registered.');
+        return;
+      }
+      
+      if (users.find(u => u.username === regUsername)) {
+        setLoading(false);
+        setErrorMsg('Username is already taken.');
+        return;
+      }
+      
       const newUser: AppUser = {
-        id: userCred.user.uid,
+        id: 'user-' + Date.now(),
         fullName: regFullName,
         username: regUsername,
         email: regEmail,
         mobileNumber: regMobile,
         role: regRole,
         status: 'Active',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        password: regPassword
       };
-      await setDoc(doc(db, 'users', userCred.user.uid), newUser);
+      
+      users.push(newUser);
+      localStorage.setItem('db_users', JSON.stringify(users));
+      
       setLoading(false);
       setSuccessMsg('Registration successful! Please login.');
       setTimeout(() => setMode('login'), 2000);
@@ -308,6 +343,8 @@ if (!isOpen) return null;
                   <span>Login to Account</span>
                 )}
               </button>
+
+              
 
               <div className="text-center mt-6">
                 <span className="text-sm text-slate-500">Don't have an account? </span>

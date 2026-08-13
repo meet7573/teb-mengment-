@@ -1,7 +1,4 @@
 
-import { auth, db } from '../lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { UserRole } from '../types';
 
 export interface AppUser {
@@ -14,6 +11,7 @@ export interface AppUser {
   status: 'Active' | 'Inactive';
   createdAt: string;
   avatarUrl?: string;
+  password?: string; // Stored only locally for mock auth
 }
 
 const CURRENT_USER_KEY = 'stm_current_user_v3';
@@ -36,6 +34,5 @@ export function setCurrentUser(user: AppUser | null): void {
 }
 
 export function logoutUser(): void {
-  signOut(auth).catch(console.error);
   setCurrentUser(null);
 }
