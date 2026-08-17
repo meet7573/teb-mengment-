@@ -21,6 +21,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(currentDir, 'dist');
+    app.use('/src/assets/images/school_management_logo_1785906402051.jpg', express.static(path.join(distPath, 'favicon.svg')));
     app.use(express.static(distPath));
     app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
