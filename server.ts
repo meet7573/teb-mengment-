@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { Pool } from 'pg';
 
 const currentDir = process.cwd();
 const app = express();
@@ -16,106 +15,113 @@ const COLLECTIONS = new Set([
   'auditLogs',
 ]);
 
-const pool = process.env.DATABASE_URL
-  ? new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
-    })
-  : null;
+const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-async function initDatabase() {
-  if (!pool) {
-    console.warn('DATABASE_URL is not configured. Production data persistence is disabled.');
-    return;
-  }
+function databaseConfigured() {
+  return Boolean(supabaseUrl && supabaseKey);
+}
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_data (
-      collection TEXT NOT NULL,
-      id TEXT NOT NULL,
-      data JSONB NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (collection, id)
-    )
-  `);
+async function supabaseRequest(pathname: string, options: RequestInit = {}) {
+  if (!databaseConfigured()) throw new Error('Supabase is not configured');
+  return fetch(`${supabaseUrl}/rest/v1/${pathname}`, {
+    ...options,
+    headers: {
+      apikey: supabaseKey!,
+      Authorization: `Bearer ${supabaseKey!}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
 }
 
 app.get('/api/health', async (_req, res) => {
   try {
-    if (pool) await pool.query('SELECT 1');
-    res.json({ status: 'ok', database: Boolean(pool) });
-  } catch {
-    res.status(503).json({ status: 'error', database: false });
+    if (!databaseConfigured()) {
+      return res.json({ status: 'ok', database: false, provider: 'supabase' });
+    }
+
+    const response = await supabaseRequest('app_data?select=id&limit=1');
+    if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
+    return res.json({ status: 'ok', database: true, provider: 'supabase' });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+    return res.status(503).json({ status: 'error', database: false, provider: 'supabase' });
   }
 });
 
 app.get('/api/db/:collection', async (req, res) => {
   const { collection } = req.params;
   if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
-  if (!pool) return res.status(503).json({ error: 'Database is not configured' });
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
 
   try {
-    const result = await pool.query(
-      'SELECT data FROM app_data WHERE collection = $1 ORDER BY updated_at ASC',
-      [collection],
+    const response = await supabaseRequest(
+      `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`,
     );
-    res.json(result.rows.map((row) => row.data));
+    if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
+    const rows = await response.json();
+    return res.json(rows.map((row: { data: unknown }) => row.data));
   } catch (error) {
     console.error(`Failed to read ${collection}:`, error);
-    res.status(500).json({ error: 'Failed to read data' });
+    return res.status(500).json({ error: 'Failed to read data' });
   }
 });
 
 app.put('/api/db/:collection', async (req, res) => {
   const { collection } = req.params;
   if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
-  if (!pool) return res.status(503).json({ error: 'Database is not configured' });
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
 
   const items = req.body;
   if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' });
+  if (items.some((item) => !item || typeof item.id !== 'string')) {
+    return res.status(400).json({ error: 'Every item must contain a string id' });
+  }
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM app_data WHERE collection = $1', [collection]);
+    // Replace only this collection. Other collections remain untouched.
+    const deleteResponse = await supabaseRequest(
+      `app_data?collection=eq.${encodeURIComponent(collection)}`,
+      { method: 'DELETE' },
+    );
+    if (!deleteResponse.ok) throw new Error(`Delete returned ${deleteResponse.status}`);
 
-    for (const item of items) {
-      if (!item || typeof item.id !== 'string') {
-        throw new Error('Every item must contain a string id');
-      }
-      await client.query(
-        `INSERT INTO app_data (collection, id, data, updated_at)
-         VALUES ($1, $2, $3::jsonb, NOW())`,
-        [collection, item.id, JSON.stringify(item)],
-      );
+    if (items.length > 0) {
+      const rows = items.map((item) => ({
+        collection,
+        id: item.id,
+        data: item,
+      }));
+      const insertResponse = await supabaseRequest('app_data', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(rows),
+      });
+      if (!insertResponse.ok) throw new Error(`Insert returned ${insertResponse.status}`);
     }
 
-    await client.query('COMMIT');
-    res.json({ ok: true, count: items.length });
+    return res.json({ ok: true, count: items.length });
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error(`Failed to save ${collection}:`, error);
-    res.status(500).json({ error: 'Failed to save data' });
-  } finally {
-    client.release();
+    return res.status(500).json({ error: 'Failed to save data' });
   }
 });
 
 app.delete('/api/db', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'Database is not configured' });
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+
   try {
-    await pool.query('TRUNCATE TABLE app_data');
-    res.json({ ok: true });
+    const response = await supabaseRequest('app_data?id=not.is.null', { method: 'DELETE' });
+    if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
+    return res.json({ ok: true });
   } catch (error) {
     console.error('Failed to reset database:', error);
-    res.status(500).json({ error: 'Failed to reset database' });
+    return res.status(500).json({ error: 'Failed to reset data' });
   }
 });
 
 async function startServer() {
-  await initDatabase();
-
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
