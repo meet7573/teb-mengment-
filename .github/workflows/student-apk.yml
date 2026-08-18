@@ -22,8 +22,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,23 +34,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Install project dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --include=dev --no-audit --no-fund
-          test -x node_modules/.bin/capacitor
-          test -x node_modules/.bin/cap
-          node_modules/.bin/capacitor --version
+      - name: Install dependencies
+        run: npm install --include=dev --no-audit --no-fund
 
-      - name: Verify Student entry
+      - name: Check project
         shell: bash
         run: |
           set -euo pipefail
@@ -57,55 +52,39 @@ jobs:
           test -s src/student/main.tsx
           test -s src/student/student.css
           test -s capacitor.config.ts
+          ./node_modules/.bin/capacitor --version
+          ./node_modules/.bin/vite --version
 
-      - name: Prepare Student entry
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp index.student.html index.html
+      - name: Prepare Student app
+        run: cp index.student.html index.html
 
-      - name: Build Student web bundle
+      - name: Build Student web app
         env:
           VITE_API_BASE_URL: https://teb-mengment.onrender.com
-        shell: bash
         run: ./node_modules/.bin/vite build
-
-      - name: Verify web bundle
-        shell: bash
-        run: test -s dist/index.html
 
       - name: Add Android platform
         shell: bash
         run: |
           set -euo pipefail
           rm -rf android
-          export PATH="$PWD/node_modules/.bin:$PATH"
           ./node_modules/.bin/capacitor add android
 
-      - name: Verify Android project
+      - name: Sync Android
         shell: bash
         run: |
           set -euo pipefail
-          test -f android/gradlew
-          test -f android/app/build.gradle
-          test -f android/settings.gradle
-
-      - name: Sync Capacitor
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$PWD/node_modules/.bin:$PATH"
           ./node_modules/.bin/capacitor sync android
 
-      - name: Build Student debug APK
+      - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Verify APK exists
+      - name: Verify APK
         shell: bash
         run: test -s android/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload Student APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: teb-student-apk
@@ -113,18 +92,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish latest Student APK release
+      - name: Publish APK release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! gh release view student-apk-latest >/dev/null 2>&1; then
+          if gh release view student-apk-latest >/dev/null 2>&1; then
+            gh release upload student-apk-latest \
+              android/app/build/outputs/apk/debug/app-debug.apk#teb-student.apk \
+              --clobber
+          else
             gh release create student-apk-latest \
+              android/app/build/outputs/apk/debug/app-debug.apk#teb-student.apk \
               --title "TEB Student APK" \
               --notes "Latest Student Tablet APK for TEB Management." \
               --target "$GITHUB_SHA"
           fi
-          gh release upload student-apk-latest \
-            android/app/build/outputs/apk/debug/app-debug.apk#teb-student.apk \
-            --clobber
