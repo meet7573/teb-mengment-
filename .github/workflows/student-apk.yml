@@ -79,8 +79,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          export PATH="$PWD/node_modules/.bin:$PATH"
-          ./node_modules/.bin/capacitor add android
+          # Use npx to invoke Capacitor CLI directly to avoid any wrapper passing unsupported flags like --verbose
+          npx --yes @capacitor/cli@7.4.3 add android
 
       - name: Verify Android project
         shell: bash
@@ -94,8 +94,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$PWD/node_modules/.bin:$PATH"
-          ./node_modules/.bin/capacitor sync android
+          # Invoke Capacitor CLI via npx to avoid unknown option errors
+          npx --yes @capacitor/cli@7.4.3 sync android
 
       - name: Build Student debug APK
         working-directory: android
