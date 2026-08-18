@@ -80,7 +80,7 @@ jobs:
           set -euo pipefail
           rm -rf android
           export PATH="$PWD/node_modules/.bin:$PATH"
-          ./node_modules/.bin/capacitor add android --verbose
+          ./node_modules/.bin/capacitor add android
 
       - name: Verify Android project
         shell: bash
@@ -95,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$PWD/node_modules/.bin:$PATH"
-          ./node_modules/.bin/capacitor sync android --verbose
+          ./node_modules/.bin/capacitor sync android
 
       - name: Build Student debug APK
         working-directory: android
