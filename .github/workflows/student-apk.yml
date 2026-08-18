@@ -5,9 +5,10 @@ on:
   push:
     branches:
       - feature/student-apk
+      - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -93,10 +94,26 @@ jobs:
         shell: bash
         run: test -s android/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload Student APK
+      - name: Upload Student APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: teb-student-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish latest Student APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view student-apk-latest >/dev/null 2>&1; then
+            gh release create student-apk-latest \
+              --title "TEB Student APK" \
+              --notes "Latest Student Tablet APK for TEB Management." \
+              --target "$GITHUB_SHA"
+          fi
+          gh release upload student-apk-latest \
+            android/app/build/outputs/apk/debug/app-debug.apk#teb-student.apk \
+            --clobber
