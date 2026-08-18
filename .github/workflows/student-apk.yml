@@ -21,7 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -43,12 +42,11 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund --include=dev
 
-      - name: Verify Capacitor CLI
+      - name: Verify Capacitor packages
         shell: bash
         run: |
           set -euo pipefail
-          test -x node_modules/.bin/cap
-          ./node_modules/.bin/cap --version
+          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/android']) process.exit(1); if(!p.devDependencies?.['@capacitor/cli']) process.exit(1); console.log('Capacitor Android:', p.dependencies['@capacitor/android']); console.log('Capacitor CLI:', p.devDependencies['@capacitor/cli']);"
 
       - name: Verify Student entry
         shell: bash
@@ -61,9 +59,7 @@ jobs:
 
       - name: Prepare Student entry
         shell: bash
-        run: |
-          set -euo pipefail
-          cp index.student.html index.html
+        run: cp index.student.html index.html
 
       - name: Build Student web bundle
         env:
@@ -79,12 +75,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          test -x node_modules/.bin/cap
-          ./node_modules/.bin/cap add android
+          npm exec --yes --package=@capacitor/cli@7.4.3 -- cap add android
 
       - name: Sync Capacitor
         shell: bash
-        run: ./node_modules/.bin/cap sync android
+        run: npm exec --yes --package=@capacitor/cli@7.4.3 -- cap sync android
 
       - name: Build Student debug APK
         working-directory: android
