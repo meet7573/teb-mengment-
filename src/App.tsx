@@ -11,6 +11,7 @@ import { ReportsView } from './components/Reports/ReportsView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { PhotoManagement } from './components/PhotoManagement/PhotoManagement';
 import { TabletUsage } from './components/TabletUsage/TabletUsage';
+import { StudentDownload } from './components/StudentDownload/StudentDownload';
 import { AuditLogsModal } from './components/Security/AuditLogsModal';
 import { LoginModal } from './components/Auth/LoginModal';
 import { LogoutModal } from './components/Auth/LogoutModal';
@@ -67,6 +68,7 @@ function MainApp() {
       {activeTab === 'reports' && <ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />}
       {activeTab === 'photo-management' && <PhotoManagement students={students} tablets={tablets} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} />}
       {activeTab === 'tablet-usage' && <TabletUsage />}
+      {activeTab === 'student-download' && <StudentDownload />}
       {activeTab === 'settings' && <SettingsView activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onRoleChange={handleRoleChange} onResetData={handleResetData} />}
     </main>
     <GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} />
@@ -76,4 +78,4 @@ function MainApp() {
     <UserManagementModal isOpen={isUsersModalOpen} onClose={() => setIsUsersModalOpen(false)} currentUser={currentUser} />
   </div>;
 }
-export default function App() { if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) return <StudentTabletApp />; return <ThemeProvider><MainApp /></ThemeProvider>; }
+export default function App() { if (window.location.pathname === '/student/download') return <StudentDownload />; if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) return <StudentTabletApp />; return <ThemeProvider><MainApp /></ThemeProvider>; }
