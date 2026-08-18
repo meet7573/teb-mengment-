@@ -40,13 +40,19 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund --include=dev
-
-      - name: Verify Capacitor packages
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const p=require('./package.json'); if(!p.dependencies?.['@capacitor/android']) process.exit(1); if(!p.devDependencies?.['@capacitor/cli']) process.exit(1); console.log('Capacitor Android:', p.dependencies['@capacitor/android']); console.log('Capacitor CLI:', p.devDependencies['@capacitor/cli']);"
+          npm install --no-audit --no-fund --include=dev
+          npm install --no-save --no-audit --no-fund @capacitor/cli@7.4.3 @capacitor/android@7.4.3
+
+      - name: Verify Capacitor CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x node_modules/.bin/cap
+          ./node_modules/.bin/cap --version
+          test -d node_modules/@capacitor/android
 
       - name: Verify Student entry
         shell: bash
@@ -75,11 +81,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          npm exec --yes --package=@capacitor/cli@7.4.3 -- cap add android
+          ./node_modules/.bin/cap add android
 
       - name: Sync Capacitor
         shell: bash
-        run: npm exec --yes --package=@capacitor/cli@7.4.3 -- cap sync android
+        run: ./node_modules/.bin/cap sync android
 
       - name: Build Student debug APK
         working-directory: android
