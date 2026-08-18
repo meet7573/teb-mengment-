@@ -19,6 +19,7 @@ export interface Student {
   status: 'Active' | 'Inactive';
   assignedTabletId?: string;
   assignedTabletNumber?: string;
+  photoPath?: string;
   createdAt: string;
 }
 
@@ -38,6 +39,7 @@ export interface Tablet {
   boxNumber?: string;
   assignedToStudentId?: string;
   assignedToStudentName?: string;
+  photoPath?: string;
 }
 
 export interface TabletBox {
