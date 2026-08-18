@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -41,20 +40,27 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Install dependencies
+      - name: Install project dependencies
         shell: bash
         run: |
           set -euo pipefail
           npm install --include=dev --no-audit --no-fund
           npm install --no-save --include=dev @capacitor/cli@7.4.3 @capacitor/android@7.4.3
 
-      - name: Verify Capacitor installation
+      - name: Install isolated Capacitor CLI
         shell: bash
         run: |
           set -euo pipefail
-          test -f node_modules/@capacitor/cli/bin/capacitor
+          npm install --global --no-audit --no-fund @capacitor/cli@7.4.3
+          command -v cap
+          cap --version
+
+      - name: Verify Capacitor Android package
+        shell: bash
+        run: |
+          set -euo pipefail
           test -d node_modules/@capacitor/android
-          node node_modules/@capacitor/cli/bin/capacitor --version
+          node -e "require('./node_modules/@capacitor/android/package.json'); console.log('Capacitor Android package OK')"
 
       - name: Verify Student entry
         shell: bash
@@ -74,6 +80,7 @@ jobs:
       - name: Build Student web bundle
         env:
           VITE_API_BASE_URL: https://teb-mengment.onrender.com
+        shell: bash
         run: ./node_modules/.bin/vite build
 
       - name: Verify web bundle
@@ -85,11 +92,18 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          node node_modules/@capacitor/cli/bin/capacitor add android
+          cap add android
+
+      - name: Verify Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/gradlew
+          test -f android/app/build.gradle
 
       - name: Sync Capacitor
         shell: bash
-        run: node node_modules/@capacitor/cli/bin/capacitor sync android
+        run: cap sync android
 
       - name: Build Student debug APK
         working-directory: android
