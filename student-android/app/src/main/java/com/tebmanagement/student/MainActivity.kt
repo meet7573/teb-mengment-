@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
 private fun StudentApp() {
     var tabletId by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
+    var sessionToken by remember { mutableStateOf<String?>(null) }
     var active by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -78,8 +79,10 @@ private fun StudentApp() {
                 Button(
                     onClick = {
                         scope.launch {
-                            status = activate(tabletId.trim(), pin.trim())
-                            active = status.startsWith("Activated")
+                            val result = activate(tabletId.trim(), pin.trim())
+                            status = result.message
+                            sessionToken = result.token
+                            active = result.token != null
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -93,8 +96,17 @@ private fun StudentApp() {
                 Button(
                     onClick = {
                         scope.launch {
-                            status = returnTablet(tabletId)
-                            if (status.startsWith("Returned")) active = false
+                            val token = sessionToken
+                            if (token == null) {
+                                status = "Session token missing"
+                                active = false
+                            } else {
+                                status = returnTablet(token)
+                                if (status == "Returned successfully") {
+                                    sessionToken = null
+                                    active = false
+                                }
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -112,7 +124,9 @@ private fun StudentApp() {
 private val client = OkHttpClient()
 private val jsonType = "application/json; charset=utf-8".toMediaType()
 
-private suspend fun activate(tabletId: String, pin: String): String {
+data class ActivationResult(val message: String, val token: String?)
+
+private suspend fun activate(tabletId: String, pin: String): ActivationResult {
     return try {
         val body = JSONObject().put("tabletId", tabletId).put("pin", pin).toString()
         val request = Request.Builder()
@@ -120,17 +134,26 @@ private suspend fun activate(tabletId: String, pin: String): String {
             .post(body.toRequestBody(jsonType))
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return "Activation failed (${response.code})"
-            "Activated successfully"
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                return ActivationResult("Activation failed (${response.code})", null)
+            }
+            val json = JSONObject(responseBody)
+            val token = json.optString("sessionToken").takeIf { it.isNotBlank() }
+            if (token == null) {
+                ActivationResult("Activation response missing session token", null)
+            } else {
+                ActivationResult("Activated successfully", token)
+            }
         }
     } catch (_: Exception) {
-        "Unable to connect to TEB server"
+        ActivationResult("Unable to connect to TEB server", null)
     }
 }
 
-private suspend fun returnTablet(tabletId: String): String {
+private suspend fun returnTablet(sessionToken: String): String {
     return try {
-        val body = JSONObject().put("tabletId", tabletId).toString()
+        val body = JSONObject().put("sessionToken", sessionToken).toString()
         val request = Request.Builder()
             .url("$API_BASE_URL/api/student/return")
             .post(body.toRequestBody(jsonType))
