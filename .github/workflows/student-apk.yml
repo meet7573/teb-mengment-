@@ -41,7 +41,7 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund --include=dev
 
       - name: Verify Capacitor CLI
         shell: bash
@@ -79,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
+          test -x node_modules/.bin/cap
           ./node_modules/.bin/cap add android
 
       - name: Sync Capacitor
