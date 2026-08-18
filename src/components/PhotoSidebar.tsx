@@ -1,12 +1,20 @@
 import React from 'react';
-import { LayoutDashboard, ClipboardCheck, Users, Box, BarChart3, Settings, Camera, ChevronLeft, ChevronRight, Search, Palette, Shield, Database, LogOut, Clock3 } from 'lucide-react';
+import { LayoutDashboard, ClipboardCheck, Users, Box, BarChart3, Settings, Camera, ChevronLeft, ChevronRight, Search, Palette, Shield, Database, LogOut, Clock3, Download } from 'lucide-react';
 import { UserRole } from '../types';
 import { AppUser } from '../utils/auth';
 interface Props { activeTab: string; setActiveTab: (tab: string) => void; collapsed: boolean; setCollapsed: (value: boolean) => void; currentUser: AppUser | null; activeRole: UserRole; setActiveRole: (role: UserRole) => void; onOpenSearch: () => void; onOpenAuditLogs: () => void; onOpenUsersModal: () => void; onOpenThemeModal: () => void; onOpenLogout: () => void; }
 export const PhotoSidebar: React.FC<Props> = ({ activeTab, setActiveTab, collapsed, setCollapsed, currentUser, activeRole, setActiveRole, onOpenSearch, onOpenAuditLogs, onOpenUsersModal, onOpenThemeModal, onOpenLogout }) => {
   const roles: UserRole[] = ['Super Admin', 'Admin', 'Teacher', 'Operator'];
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'students', label: 'Students', icon: Users }, { id: 'attendance', label: 'Attendance', icon: ClipboardCheck, badge: 'Live' }, { id: 'boxes', label: 'Boxes', icon: Box }, { id: 'reports', label: 'Reports', icon: BarChart3 }, { id: 'tablet-usage', label: 'Tablet Usage', icon: Clock3, badge: 'NEW' }, { id: 'photo-management', label: 'Photo Management', icon: Camera, badge: 'NEW' }, { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'students', label: 'Students', icon: Users },
+    { id: 'attendance', label: 'Attendance', icon: ClipboardCheck, badge: 'Live' },
+    { id: 'boxes', label: 'Boxes', icon: Box },
+    { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'tablet-usage', label: 'Tablet Usage', icon: Clock3, badge: 'NEW' },
+    { id: 'photo-management', label: 'Photo Management', icon: Camera, badge: 'NEW' },
+    { id: 'student-download', label: 'Student App', icon: Download, badge: 'APK' },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ];
   return <aside className={`fixed left-0 top-0 bottom-0 z-30 bg-white border-r border-slate-200 transition-all duration-300 flex flex-col shadow-sm select-none ${collapsed ? 'w-16' : 'w-64'}`}>
     <button onClick={() => setCollapsed(!collapsed)} className="absolute -right-3 top-5 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 p-1.5 rounded-full shadow-md z-40">{collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}</button>
