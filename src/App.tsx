@@ -10,6 +10,7 @@ import { DigitalAttendance } from './components/Attendance/DigitalAttendance';
 import { ReportsView } from './components/Reports/ReportsView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { PhotoManagement } from './components/PhotoManagement/PhotoManagement';
+import { TabletUsage } from './components/TabletUsage/TabletUsage';
 import { AuditLogsModal } from './components/Security/AuditLogsModal';
 import { LoginModal } from './components/Auth/LoginModal';
 import { LogoutModal } from './components/Auth/LogoutModal';
@@ -37,22 +38,11 @@ function MainApp() {
   const [boxes, setBoxesState] = useState<TabletBox[]>([]);
   const [assignments, setAssignmentsState] = useState<TabletAssignment[]>([]);
   const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>([]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    const unsubStudents = subscribeToCollection<Student>('students', setStudentsState);
-    const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState);
-    const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState);
-    const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState);
-    const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState);
-    return () => { unsubStudents(); unsubTablets(); unsubBoxes(); unsubAssignments(); unsubAttendance(); };
-  }, [currentUser]);
-
+  useEffect(() => { if (!currentUser) return; const unsubStudents = subscribeToCollection<Student>('students', setStudentsState); const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState); const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState); const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState); const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState); return () => { unsubStudents(); unsubTablets(); unsubBoxes(); unsubAssignments(); unsubAttendance(); }; }, [currentUser]);
   const [preselectedStudent, setPreselectedStudent] = useState<Student | null>(null);
   const [preselectedTablet, setPreselectedTablet] = useState<Tablet | null>(null);
   useEffect(() => { document.documentElement.classList.remove('dark'); localStorage.setItem('stm_theme', 'light'); }, []);
   useEffect(() => { const handleKeyDown = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') { e.preventDefault(); setIsSearchOpen(true); } }; window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown); }, []);
-
   const handleRoleChange = (role: UserRole) => { setActiveRole(role); saveStoredRole(role); };
   const handleLoginSuccess = (user: AppUser) => { setCurrentUserState(user); setActiveRole(user.role); saveStoredRole(user.role); };
   const handleConfirmLogout = () => { logoutUser(); setCurrentUserState(null); setIsLogoutOpen(false); };
@@ -64,7 +54,6 @@ function MainApp() {
   const handleResetData = () => { clearAllDatabase(); setStudentsState([]); setTabletsState([]); setBoxesState([]); setAssignmentsState([]); setAttendanceRecordsState([]); setIsAuditLogsOpen(false); };
   const handleQuickAssignFromStudent = (student: Student) => { setPreselectedStudent(student); setPreselectedTablet(null); setActiveTab('assignments'); };
   const handleQuickAssignFromTablet = (tablet: Tablet) => { setPreselectedTablet(tablet); setPreselectedStudent(null); setActiveTab('assignments'); };
-
   if (!currentUser) return <LoginModal isOpen={true} onLoginSuccess={handleLoginSuccess} />;
   return <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex">
     <PhotoSidebar activeTab={activeTab} setActiveTab={setActiveTab} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} currentUser={currentUser} activeRole={activeRole} setActiveRole={handleRoleChange} onOpenSearch={() => setIsSearchOpen(true)} onOpenAuditLogs={() => setIsAuditLogsOpen(true)} onOpenUsersModal={() => setIsUsersModalOpen(true)} onOpenThemeModal={() => setIsThemeModalOpen(true)} onOpenLogout={() => setIsLogoutOpen(true)} />
@@ -77,6 +66,7 @@ function MainApp() {
       {activeTab === 'assignments' && <TabletAssignmentView assignments={assignments} students={students} tablets={tablets} onSaveAssignments={handleSaveAssignments} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} preselectedStudentForAssign={preselectedStudent} preselectedTabletForAssign={preselectedTablet} onClearPreselections={() => { setPreselectedStudent(null); setPreselectedTablet(null); }} />}
       {activeTab === 'reports' && <ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />}
       {activeTab === 'photo-management' && <PhotoManagement students={students} tablets={tablets} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} />}
+      {activeTab === 'tablet-usage' && <TabletUsage />}
       {activeTab === 'settings' && <SettingsView activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onRoleChange={handleRoleChange} onResetData={handleResetData} />}
     </main>
     <GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} />
@@ -86,5 +76,4 @@ function MainApp() {
     <UserManagementModal isOpen={isUsersModalOpen} onClose={() => setIsUsersModalOpen(false)} currentUser={currentUser} />
   </div>;
 }
-
 export default function App() { if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) return <StudentTabletApp />; return <ThemeProvider><MainApp /></ThemeProvider>; }
