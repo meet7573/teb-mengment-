@@ -42,14 +42,19 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Verify Capacitor CLI
         shell: bash
         run: |
           set -euo pipefail
-          test -x node_modules/.bin/cap
-          ./node_modules/.bin/cap --version
+          npm install --include=dev --no-audit --no-fund
+          npm install --no-save --include=dev @capacitor/cli@7.4.3 @capacitor/android@7.4.3
+
+      - name: Verify Capacitor installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f node_modules/@capacitor/cli/bin/capacitor
+          test -d node_modules/@capacitor/android
+          node node_modules/@capacitor/cli/bin/capacitor --version
 
       - name: Verify Student entry
         shell: bash
@@ -69,7 +74,7 @@ jobs:
       - name: Build Student web bundle
         env:
           VITE_API_BASE_URL: https://teb-mengment.onrender.com
-        run: npx vite build
+        run: ./node_modules/.bin/vite build
 
       - name: Verify web bundle
         shell: bash
@@ -80,11 +85,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          ./node_modules/.bin/cap add android
+          node node_modules/@capacitor/cli/bin/capacitor add android
 
       - name: Sync Capacitor
         shell: bash
-        run: ./node_modules/.bin/cap sync android
+        run: node node_modules/@capacitor/cli/bin/capacitor sync android
 
       - name: Build Student debug APK
         working-directory: android
