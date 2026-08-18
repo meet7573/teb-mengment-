@@ -19,6 +19,7 @@ export interface Student {
   status: 'Active' | 'Inactive';
   assignedTabletId?: string;
   assignedTabletNumber?: string;
+  photoPath?: string;
   createdAt: string;
 }
 
@@ -38,16 +39,17 @@ export interface Tablet {
   boxNumber?: string;
   assignedToStudentId?: string;
   assignedToStudentName?: string;
+  photoPath?: string;
 }
 
 export interface TabletBox {
   id: string;
-  boxNumber: string; // e.g. "BOX-01"
-  boxName: string; // e.g. "Cabinet Alpha - Box 1"
-  capacity: number; // strictly 7
-  location: string; // e.g. "Lab 101 - Shelf A"
+  boxNumber: string;
+  boxName: string;
+  capacity: number;
+  location: string;
   qrCode: string;
-  tablets: Tablet[]; // array of tablet items assigned to this box (max 7)
+  tablets: Tablet[];
   createdAt: string;
 }
 
@@ -82,14 +84,14 @@ export interface AttendanceDetail {
   checkInTime?: string;
   checkOutTime?: string;
   totalDuration?: string;
-  cancellationExpiry?: string; // ISO string representing expiry
+  cancellationExpiry?: string;
   remarks?: string;
   markedAt: string;
 }
 
 export interface DailyAttendanceRecord {
   id: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   standard?: StandardGrade;
   isLocked: boolean;
   lockedAt?: string;
