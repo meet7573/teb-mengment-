@@ -30,9 +30,8 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
     throw new Error(`Database save failed: ${response.status}`);
   }
 
-  // Student records receive their secure 6-digit PIN and unique tablet ID immediately after save.
   if (collectionName === 'students') {
-    const role = localStorage.getItem('user_role') || localStorage.getItem('stm_role') || '';
+    const role = localStorage.getItem('stm_active_role_v3') || '';
     const credentialsResponse = await fetch('/api/photos/student/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-admin-role': role },
