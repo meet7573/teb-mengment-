@@ -50,8 +50,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x node_modules/.bin/cap
-          ./node_modules/.bin/cap --version
+          test -f node_modules/@capacitor/cli/bin/capacitor
+          node node_modules/@capacitor/cli/bin/capacitor --version
           test -d node_modules/@capacitor/android
 
       - name: Verify Student entry
@@ -81,11 +81,13 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          ./node_modules/.bin/cap add android
+          node node_modules/@capacitor/cli/bin/capacitor add android
 
       - name: Sync Capacitor
         shell: bash
-        run: ./node_modules/.bin/cap sync android
+        run: |
+          set -euo pipefail
+          node node_modules/@capacitor/cli/bin/capacitor sync android
 
       - name: Build Student debug APK
         working-directory: android
