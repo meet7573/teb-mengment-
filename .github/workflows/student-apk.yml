@@ -45,22 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           npm install --include=dev --no-audit --no-fund
-          npm install --no-save --include=dev @capacitor/cli@7.4.3 @capacitor/android@7.4.3
-
-      - name: Install isolated Capacitor CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --global --no-audit --no-fund @capacitor/cli@7.4.3
-          command -v cap
-          cap --version
-
-      - name: Verify Capacitor Android package
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d node_modules/@capacitor/android
-          node -e "require('./node_modules/@capacitor/android/package.json'); console.log('Capacitor Android package OK')"
+          test -x node_modules/.bin/capacitor
+          test -x node_modules/.bin/cap
+          node_modules/.bin/capacitor --version
 
       - name: Verify Student entry
         shell: bash
@@ -92,7 +79,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          cap add android
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          ./node_modules/.bin/capacitor add android --verbose
 
       - name: Verify Android project
         shell: bash
@@ -100,10 +88,14 @@ jobs:
           set -euo pipefail
           test -f android/gradlew
           test -f android/app/build.gradle
+          test -f android/settings.gradle
 
       - name: Sync Capacitor
         shell: bash
-        run: cap sync android
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          ./node_modules/.bin/capacitor sync android --verbose
 
       - name: Build Student debug APK
         working-directory: android
