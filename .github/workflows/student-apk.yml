@@ -5,9 +5,10 @@ on:
   push:
     branches:
       - feature/student-apk
+      - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -39,20 +40,14 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Install dependencies
+      - name: Install project dependencies
         shell: bash
         run: |
           set -euo pipefail
-          npm install --no-audit --no-fund --include=dev
-          npm install --no-save --no-audit --no-fund @capacitor/cli@7.4.3 @capacitor/android@7.4.3
-
-      - name: Verify Capacitor CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f node_modules/@capacitor/cli/bin/capacitor
-          node node_modules/@capacitor/cli/bin/capacitor --version
-          test -d node_modules/@capacitor/android
+          npm install --include=dev --no-audit --no-fund
+          test -x node_modules/.bin/capacitor
+          test -x node_modules/.bin/cap
+          node_modules/.bin/capacitor --version
 
       - name: Verify Student entry
         shell: bash
@@ -65,12 +60,15 @@ jobs:
 
       - name: Prepare Student entry
         shell: bash
-        run: cp index.student.html index.html
+        run: |
+          set -euo pipefail
+          cp index.student.html index.html
 
       - name: Build Student web bundle
         env:
           VITE_API_BASE_URL: https://teb-mengment.onrender.com
-        run: npx vite build
+        shell: bash
+        run: ./node_modules/.bin/vite build
 
       - name: Verify web bundle
         shell: bash
@@ -81,13 +79,23 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          node node_modules/@capacitor/cli/bin/capacitor add android
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          ./node_modules/.bin/capacitor add android
+
+      - name: Verify Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/gradlew
+          test -f android/app/build.gradle
+          test -f android/settings.gradle
 
       - name: Sync Capacitor
         shell: bash
         run: |
           set -euo pipefail
-          node node_modules/@capacitor/cli/bin/capacitor sync android
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          ./node_modules/.bin/capacitor sync android
 
       - name: Build Student debug APK
         working-directory: android
@@ -97,10 +105,26 @@ jobs:
         shell: bash
         run: test -s android/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload Student APK
+      - name: Upload Student APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: teb-student-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish latest Student APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view student-apk-latest >/dev/null 2>&1; then
+            gh release create student-apk-latest \
+              --title "TEB Student APK" \
+              --notes "Latest Student Tablet APK for TEB Management." \
+              --target "$GITHUB_SHA"
+          fi
+          gh release upload student-apk-latest \
+            android/app/build/outputs/apk/debug/app-debug.apk#teb-student.apk \
+            --clobber
