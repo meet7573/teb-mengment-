@@ -15,8 +15,9 @@ import { LogoutModal } from './components/Auth/LogoutModal';
 import { UserManagementModal } from './components/Auth/UserManagementModal';
 import { ThemeSettingsModal } from './components/Theme/ThemeSettingsModal';
 import { ThemeProvider } from './context/ThemeContext';
+import { StudentTabletApp } from './student/StudentTabletApp';
 
-import { 
+import {
   getStoredRole, saveStoredRole,
   clearAllDatabase
 } from './utils/storage';
@@ -54,13 +55,13 @@ function MainApp() {
   // Fetch initial data from Firestore
   useEffect(() => {
     if (!currentUser) return;
-    
+
     const unsubStudents = subscribeToCollection<Student>('students', setStudentsState);
     const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState);
     const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState);
     const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState);
     const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState);
-    
+
     return () => {
       unsubStudents();
       unsubTablets();
@@ -92,13 +93,11 @@ function MainApp() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Sync role
   const handleRoleChange = (role: UserRole) => {
     setActiveRole(role);
     saveStoredRole(role);
   };
 
-  // Auth Handlers
   const handleLoginSuccess = (user: AppUser) => {
     setCurrentUserState(user);
     setActiveRole(user.role);
@@ -111,7 +110,6 @@ function MainApp() {
     setIsLogoutOpen(false);
   };
 
-  // Data Save Handlers
   const handleSaveStudents = async (updated: Student[]) => {
     try {
       await syncCollection('students', students, updated);
@@ -142,7 +140,6 @@ function MainApp() {
     } catch (e) { console.error('Failed to sync attendance', e); }
   };
 
-  // Reset to seed defaults or clean data
   const handleResetData = () => {
     clearAllDatabase();
     setStudentsState([]);
@@ -153,7 +150,6 @@ function MainApp() {
     setIsAuditLogsOpen(false);
   };
 
-  // Quick Assign Handlers
   const handleQuickAssignFromStudent = (student: Student) => {
     setPreselectedStudent(student);
     setPreselectedTablet(null);
@@ -177,8 +173,6 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex">
-      
-      {/* Sidebar with Integrated Navigation, User Profile Badge & Quick Actions */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -186,7 +180,7 @@ function MainApp() {
         setCollapsed={setSidebarCollapsed}
         currentUser={currentUser}
         activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
+        onNavigate={(tab) => setActiveTab(tab)}
         setActiveRole={handleRoleChange}
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
@@ -195,152 +189,56 @@ function MainApp() {
         onOpenLogout={() => setIsLogoutOpen(true)}
       />
 
-      {/* Main Content Area */}
       <main className={`flex-1 transition-all duration-300 min-w-0 ${
         sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'
       } ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
-          
-          {activeTab === 'dashboard' && (
-            <DashboardView
-              students={students}
-              tablets={tablets}
-              boxes={boxes}
-              attendanceRecords={attendanceRecords}
-              onNavigate={(tab) => setActiveTab(tab)}
-            />
-          )}
+        {activeTab === 'dashboard' && (
+          <DashboardView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} onNavigate={(tab) => setActiveTab(tab)} />
+        )}
 
-          {activeTab === 'attendance' && (
-            <DigitalAttendance
-              students={students}
-              attendanceRecords={attendanceRecords}
-              onSaveAttendanceRecords={handleSaveAttendance}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-            />
-          )}
+        {activeTab === 'attendance' && (
+          <DigitalAttendance students={students} attendanceRecords={attendanceRecords} onSaveAttendanceRecords={handleSaveAttendance} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />
+        )}
 
-          {activeTab === 'students' && (
-            <StudentManagement
-              students={students}
-              onSaveStudents={handleSaveStudents}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-              onQuickAssignTablet={handleQuickAssignFromStudent}
-            />
-          )}
+        {activeTab === 'students' && (
+          <StudentManagement students={students} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssignTablet={handleQuickAssignFromStudent} />
+        )}
 
-          {activeTab === 'boxes' && (
-            <TabletBoxManagement
-              boxes={boxes}
-              tablets={tablets}
-              students={students}
-              onSaveBoxes={handleSaveBoxes}
-              onSaveTablets={handleSaveTablets}
-              onSaveStudents={handleSaveStudents}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-            />
-          )}
+        {activeTab === 'boxes' && (
+          <TabletBoxManagement boxes={boxes} tablets={tablets} students={students} onSaveBoxes={handleSaveBoxes} onSaveTablets={handleSaveTablets} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />
+        )}
 
-          {activeTab === 'tablets' && (
-            <TabletManagement
-              tablets={tablets}
-              students={students}
-              boxes={boxes}
-              onSaveTablets={handleSaveTablets}
-              onSaveBoxes={handleSaveBoxes}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-              onQuickAssign={handleQuickAssignFromTablet}
-            />
-          )}
+        {activeTab === 'tablets' && (
+          <TabletManagement tablets={tablets} students={students} boxes={boxes} onSaveTablets={handleSaveTablets} onSaveBoxes={handleSaveBoxes} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssign={handleQuickAssignFromTablet} />
+        )}
 
-          {activeTab === 'assignments' && (
-            <TabletAssignmentView
-              assignments={assignments}
-              students={students}
-              tablets={tablets}
-              onSaveAssignments={handleSaveAssignments}
-              onSaveStudents={handleSaveStudents}
-              onSaveTablets={handleSaveTablets}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-              preselectedStudentForAssign={preselectedStudent}
-              preselectedTabletForAssign={preselectedTablet}
-              onClearPreselections={() => {
-                setPreselectedStudent(null);
-                setPreselectedTablet(null);
-              }}
-            />
-          )}
+        {activeTab === 'assignments' && (
+          <TabletAssignmentView assignments={assignments} students={students} tablets={tablets} onSaveAssignments={handleSaveAssignments} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} preselectedStudentForAssign={preselectedStudent} preselectedTabletForAssign={preselectedTablet} onClearPreselections={() => { setPreselectedStudent(null); setPreselectedTablet(null); }} />
+        )}
 
-          {activeTab === 'reports' && (
-            <ReportsView
-              students={students}
-              tablets={tablets}
-              boxes={boxes}
-              attendanceRecords={attendanceRecords}
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-            />
-          )}
+        {activeTab === 'reports' && (
+          <ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />
+        )}
 
-          {activeTab === 'settings' && (
-            <SettingsView
-              activeRole={activeRole}
-              onNavigate={(tab) => setActiveTab(tab)}
-              onRoleChange={handleRoleChange}
-              onResetData={handleResetData}
-            />
-          )}
+        {activeTab === 'settings' && (
+          <SettingsView activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onRoleChange={handleRoleChange} onResetData={handleResetData} />
+        )}
+      </main>
 
-        </main>
-
-      {/* Global Search Dialog */}
-      <GlobalSearchModal
-        students={students}
-        tablets={tablets}
-        boxes={boxes}
-        assignments={assignments}
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        onNavigate={(tab) => setActiveTab(tab)}
-      />
-
-      {/* Security & Audit Logs Modal */}
-      <AuditLogsModal
-        isOpen={isAuditLogsOpen}
-        onClose={() => setIsAuditLogsOpen(false)}
-        onResetData={handleResetData}
-      />
-
-      {/* Centralized Theme Customization Modal */}
-      <ThemeSettingsModal
-        isOpen={isThemeModalOpen}
-        onClose={() => setIsThemeModalOpen(false)}
-      />
-
-      {/* Logout Confirmation Modal */}
-      <LogoutModal
-        isOpen={isLogoutOpen}
-        onClose={() => setIsLogoutOpen(false)}
-        onConfirmLogout={handleConfirmLogout}
-        userName={currentUser?.fullName}
-      />
-
-      {/* System Users & Registration Modal */}
-      <UserManagementModal
-        isOpen={isUsersModalOpen}
-        onClose={() => setIsUsersModalOpen(false)}
-        currentUser={currentUser}
-      />
-
+      <GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} />
+      <AuditLogsModal isOpen={isAuditLogsOpen} onClose={() => setIsAuditLogsOpen(false)} onResetData={handleResetData} />
+      <ThemeSettingsModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
+      <LogoutModal isOpen={isLogoutOpen} onClose={() => setIsLogoutOpen(false)} onConfirmLogout={handleConfirmLogout} userName={currentUser?.fullName} />
+      <UserManagementModal isOpen={isUsersModalOpen} onClose={() => setIsUsersModalOpen(false)} currentUser={currentUser} />
     </div>
   );
 }
 
 export default function App() {
+  if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) {
+    return <StudentTabletApp />;
+  }
+
   return (
     <ThemeProvider>
       <MainApp />
