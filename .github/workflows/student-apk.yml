@@ -43,6 +43,13 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Verify Capacitor CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x node_modules/.bin/cap
+          ./node_modules/.bin/cap --version
+
       - name: Verify Student entry
         shell: bash
         run: |
@@ -72,10 +79,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf android
-          npx cap add android
+          ./node_modules/.bin/cap add android
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        shell: bash
+        run: ./node_modules/.bin/cap sync android
 
       - name: Build Student debug APK
         working-directory: android
