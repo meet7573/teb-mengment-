@@ -31,17 +31,25 @@ export function StudentTabletApp() {
   async function activate() {
     setError('');
     setMessage('');
-    if (!tabletId.trim() || !pin.trim()) {
+    const cleanTabletId = tabletId.trim();
+    const cleanPin = pin.trim();
+
+    if (!cleanTabletId || !cleanPin) {
       setError('Enter the tablet ID and student PIN.');
       return;
     }
 
     setLoading(true);
     try {
+      // Student records use the canonical PIN format PIN-1234, while the
+      // student tablet UI accepts only numeric input. Send the same canonical
+      // format used by StudentManagement to avoid false 401 responses.
+      const canonicalPin = /^PIN-/i.test(cleanPin) ? cleanPin.toUpperCase() : `PIN-${cleanPin}`;
+
       const response = await fetch('/api/student/activate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tabletId: tabletId.trim(), pin: pin.trim() }),
+        body: JSON.stringify({ tabletId: cleanTabletId, pin: canonicalPin }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Activation failed.');
