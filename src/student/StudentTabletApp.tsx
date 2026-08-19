@@ -7,6 +7,15 @@ interface ActiveSession {
   startedAt: string;
 }
 
+function normalizeTabletId(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function normalizeStudentPin(value: string): string {
+  const cleaned = value.trim().replace(/^PIN-/i, '').replace(/\D/g, '');
+  return cleaned ? `PIN-${cleaned}` : '';
+}
+
 export function StudentTabletApp() {
   const [tabletId, setTabletId] = useState('');
   const [pin, setPin] = useState('');
@@ -31,28 +40,42 @@ export function StudentTabletApp() {
   async function activate() {
     setError('');
     setMessage('');
-    const cleanTabletId = tabletId.trim();
-    const cleanPin = pin.trim();
 
-    if (!cleanTabletId || !cleanPin) {
+    const cleanTabletId = normalizeTabletId(tabletId);
+    const canonicalPin = normalizeStudentPin(pin);
+
+    if (!cleanTabletId || !canonicalPin) {
       setError('Enter the tablet ID and student PIN.');
       return;
     }
 
     setLoading(true);
     try {
-      // Student records use the canonical PIN format PIN-1234, while the
-      // student tablet UI accepts only numeric input. Send the same canonical
-      // format used by StudentManagement to avoid false 401 responses.
-      const canonicalPin = /^PIN-/i.test(cleanPin) ? cleanPin.toUpperCase() : `PIN-${cleanPin}`;
-
+      // Always send the exact canonical values expected by the backend:
+      // Tablet ID -> uppercase (e.g. TAB-001)
+      // Student PIN -> PIN-<digits> (e.g. PIN-595166)
       const response = await fetch('/api/student/activate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tabletId: cleanTabletId, pin: canonicalPin }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          tabletId: cleanTabletId,
+          pin: canonicalPin,
+        }),
       });
+
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Activation failed.');
+
+      if (!response.ok) {
+        throw new Error(result?.error || `Activation failed (${response.status}).`);
+      }
+
+      if (!result?.session) {
+        throw new Error('Activation response is invalid. Please try again.');
+      }
+
       setSession(result.session);
       setPin('');
       setMessage('Tablet activated successfully.');
