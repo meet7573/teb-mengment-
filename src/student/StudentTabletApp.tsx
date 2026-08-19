@@ -20,7 +20,6 @@ interface ActiveSession {
 
 const SESSION_KEY = 'teb_student_session_token';
 
-function normalizeTabletId(value: string) { return value.trim().toUpperCase(); }
 function normalizePin(value: string) { return value.trim().replace(/^PIN-/i, '').replace(/\D/g, '').slice(0, 12); }
 
 function formatElapsed(startedAt: string) {
@@ -33,14 +32,13 @@ function formatElapsed(startedAt: string) {
 
 export function StudentTabletApp() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [tabletId, setTabletId] = useState('');
   const [pin, setPin] = useState('');
   const [session, setSession] = useState<ActiveSession | null>(null);
   const [elapsed, setElapsed] = useState('00:00:00');
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ name: '', pin: '', standard: '', coachingType: 'Coaching', roomNumber: '', wingNumber: '', tabletId: '' });
+  const [form, setForm] = useState({ name: '', pin: '', standard: '', coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
 
   const student = session?.student;
   const hasSession = Boolean(session);
@@ -56,7 +54,6 @@ export function StudentTabletApp() {
         if (!response.ok || !result?.session) throw new Error('Session expired. Please login again.');
         if (!cancelled) {
           setSession(result.session);
-          setTabletId(result.session.tabletId || '');
           setMessage('Active session restored.');
         }
       } catch (e) {
@@ -77,27 +74,26 @@ export function StudentTabletApp() {
     return () => window.clearInterval(timer);
   }, [session]);
 
-  const registrationValid = useMemo(() => {
-    return Boolean(form.name.trim() && normalizePin(form.pin).length >= 4 && form.standard.trim() && form.coachingType && form.roomNumber.trim() && form.wingNumber.trim() && normalizeTabletId(form.tabletId));
-  }, [form]);
+  const registrationValid = useMemo(() => Boolean(
+    form.name.trim() && normalizePin(form.pin).length >= 4 && form.standard.trim() &&
+    ['Coaching', 'Non-Coaching'].includes(form.coachingType) && form.roomNumber.trim() && form.wingNumber.trim()
+  ), [form]);
 
-  async function activate(cleanTabletId = tabletId, cleanPin = pin) {
-    const normalizedTablet = normalizeTabletId(cleanTabletId);
+  async function activate(cleanPin = pin) {
     const normalizedPin = normalizePin(cleanPin);
-    if (!normalizedTablet || !normalizedPin) throw new Error('Enter the tablet ID and student PIN.');
+    if (!normalizedPin) throw new Error('Enter the student PIN.');
 
     const response = await fetch('/api/student/activate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ tabletId: normalizedTablet, pin: normalizedPin })
+      body: JSON.stringify({ pin: normalizedPin })
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || `Activation failed (${response.status}).`);
-    if (!result?.session) throw new Error('Activation response is invalid.');
+    if (!response.ok) throw new Error(result?.error || `Login failed (${response.status}).`);
+    if (!result?.session) throw new Error('Login response is invalid.');
 
     window.localStorage.setItem(SESSION_KEY, result.session.sessionToken);
     setSession(result.session);
-    setTabletId(normalizedTablet);
     setPin('');
     return result.session as ActiveSession;
   }
@@ -111,20 +107,18 @@ export function StudentTabletApp() {
 
   async function register() {
     setError(''); setMessage(''); setLoading(true);
-    const normalizedTablet = normalizeTabletId(form.tabletId);
     const normalizedPin = normalizePin(form.pin);
     try {
       const response = await fetch('/api/student/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ ...form, pin: normalizedPin, tabletId: normalizedTablet })
+        body: JSON.stringify({ ...form, pin: normalizedPin })
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result?.error || `Registration failed (${response.status}).`);
 
-      // Registration immediately starts the first session; the PIN is never persisted in the browser.
-      await activate(normalizedTablet, normalizedPin);
-      setForm({ name: '', pin: '', standard: '', coachingType: 'Coaching', roomNumber: '', wingNumber: '', tabletId: '' });
+      await activate(normalizedPin);
+      setForm({ name: '', pin: '', standard: '', coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
       setMessage('Student registered and signed in successfully.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Registration failed.');
@@ -158,7 +152,7 @@ export function StudentTabletApp() {
       <section className="w-full max-w-md rounded-3xl bg-white shadow-xl border border-slate-200 p-7">
         <div className="text-center mb-7">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-600 text-2xl font-bold text-white">TEB</div>
-          <h1 className="text-2xl font-bold">Student Tablet</h1>
+          <h1 className="text-2xl font-bold">Student App</h1>
           <p className="mt-1 text-sm text-slate-500">Student registration, secure login and attendance</p>
         </div>
 
@@ -171,9 +165,9 @@ export function StudentTabletApp() {
 
             {mode === 'login' ? (
               <div className="space-y-4">
-                <label className="block"><span className="mb-1.5 block text-sm font-medium">Tablet ID</span><input value={tabletId} onChange={(e) => setTabletId(e.target.value)} placeholder="e.g. TAB-001" autoCapitalize="characters" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" /></label>
                 <label className="block"><span className="mb-1.5 block text-sm font-medium">Student PIN</span><input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 12))} inputMode="numeric" type="password" placeholder="Enter PIN" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" /></label>
                 <button disabled={loading} onClick={login} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Signing in...' : 'Login & Start'}</button>
+                <p className="text-center text-xs text-slate-500">Your tablet is assigned by Admin. You do not enter a Tablet ID.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -182,8 +176,8 @@ export function StudentTabletApp() {
                 <input value={form.standard} onChange={(e) => setForm({ ...form, standard: e.target.value })} placeholder="Standard" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
                 <select value={form.coachingType} onChange={(e) => setForm({ ...form, coachingType: e.target.value })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Coaching</option><option>Non-Coaching</option></select>
                 <div className="grid grid-cols-2 gap-3"><input value={form.roomNumber} onChange={(e) => setForm({ ...form, roomNumber: e.target.value })} placeholder="Room Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /><input value={form.wingNumber} onChange={(e) => setForm({ ...form, wingNumber: e.target.value })} placeholder="Wing Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /></div>
-                <input value={form.tabletId} onChange={(e) => setForm({ ...form, tabletId: e.target.value })} placeholder="Tablet ID e.g. TAB-001" autoCapitalize="characters" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
                 <button disabled={loading || !registrationValid} onClick={register} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Saving...' : 'Register & Start'}</button>
+                <p className="text-center text-xs text-slate-500">Tablet ID will be assigned later by Admin.</p>
               </div>
             )}
           </>
@@ -192,7 +186,7 @@ export function StudentTabletApp() {
             <div className="rounded-2xl bg-emerald-50 p-5 text-center">
               <p className="text-sm font-medium text-emerald-700">Session Active • IN</p>
               <p className="mt-1 text-xl font-bold">{session.studentName}</p>
-              <p className="mt-1 text-sm text-emerald-700">{session.tabletId}</p>
+              <p className="mt-1 text-sm text-emerald-700">Assigned Tablet: {session.tabletId}</p>
               <p className="mt-4 text-3xl font-mono font-bold text-emerald-900">{elapsed}</p>
             </div>
             {student && <div className="grid grid-cols-2 gap-2 text-sm"><div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">Standard</span><p className="font-semibold">{student.standard}</p></div><div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">Type</span><p className="font-semibold">{student.coachingType}</p></div><div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">Room</span><p className="font-semibold">{student.roomNumber}</p></div><div className="rounded-xl bg-slate-50 p-3"><span className="text-slate-500">Wing</span><p className="font-semibold">{student.wingNumber}</p></div></div>}
