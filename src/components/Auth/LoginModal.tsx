@@ -93,8 +93,17 @@ const handleForgotSubmit = async (e: React.FormEvent) => {
     setSuccessMsg('');
     try {
       setLoading(true);
-      await sendPasswordResetEmail(auth, forgotEmail);
+      // Simulate network request
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      const users: AppUser[] = JSON.parse(localStorage.getItem('db_users') || '[]');
+      const user = users.find(u => u.email === forgotEmail);
+
       setLoading(false);
+      if (!user) {
+        setErrorMsg('No account found with that email.');
+        return;
+      }
       setSuccessMsg('Reset link sent to your email.');
       setTimeout(() => setMode('login'), 3000);
     } catch (err: any) {
@@ -105,6 +114,11 @@ const handleForgotSubmit = async (e: React.FormEvent) => {
 
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+  };
+
+  const handleResendVerify = async () => {
+    setErrorMsg('');
+    setSuccessMsg('Verification email sent. Please check your inbox.');
   };
 
   

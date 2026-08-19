@@ -33,8 +33,8 @@ export function createPhotoRouter(config: PhotoConfig) {
       if (!response.ok) throw new Error(`Student lookup returned ${response.status}`);
       const rows = await response.json();
       const students = rows.map((row: any) => ({ id: String(row.id), data: row.data || {} }));
-      const usedPins = new Set(students.map((s: any) => String(s.data.pinNumber || '').toUpperCase()).filter(Boolean));
-      const usedTabletIds = new Set(students.map((s: any) => String(s.data.assignedTabletId || s.data.assignedTabletNumber || '').toUpperCase()).filter(Boolean));
+      const usedPins = new Set<string>(students.map((s: any) => String(s.data.pinNumber || '').toUpperCase()).filter(Boolean));
+      const usedTabletIds = new Set<string>(students.map((s: any) => String(s.data.assignedTabletId || s.data.assignedTabletNumber || '').toUpperCase()).filter(Boolean));
       const normalized: any[] = [];
       for (const row of students) {
         const data = { ...row.data };
