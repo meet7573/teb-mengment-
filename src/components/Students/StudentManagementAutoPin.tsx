@@ -2,103 +2,28 @@ import React, { useState } from 'react';
 import { Users, Plus, Tablet, CheckCircle2, XCircle } from 'lucide-react';
 import { Student, StandardGrade, UserRole } from '../../types';
 
-interface Props {
-  students: Student[];
-  onSaveStudents: (updated: Student[]) => void;
-  activeRole: UserRole;
-  onQuickAssignTablet: (student: Student) => void;
-}
+interface Props { students: Student[]; onSaveStudents: (updated: Student[]) => void; activeRole: UserRole; onQuickAssignTablet: (student: Student) => void; }
+function normalizePin(value: unknown) { return String(value ?? '').replace(/\D/g, '').slice(0, 4); }
+function makePin(students: Student[]) { const used = new Set(students.map(s => normalizePin(s.pinNumber))); for (let i = 0; i < 10000; i++) { const pin = String(Math.floor(Math.random() * 10000)).padStart(4, '0'); if (!used.has(pin)) return pin; } throw new Error('No unique 4-digit App PIN is available.'); }
 
-function normalizePin(value: unknown) {
-  return String(value ?? '').replace(/\D/g, '').slice(0, 4);
-}
-
-export const StudentManagementAutoPin: React.FC<Props> = ({ students, onSaveStudents, activeRole, onQuickAssignTablet }) => {
-  const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [createdPin, setCreatedPin] = useState('');
+export const StudentManagementAutoPin: React.FC<Props> = ({ students, onSaveStudents, onQuickAssignTablet }) => {
+  const [open, setOpen] = useState(false); const [saving, setSaving] = useState(false); const [error, setError] = useState(''); const [createdPin, setCreatedPin] = useState('');
   const [form, setForm] = useState({ name: '', standard: 'Std 8' as StandardGrade, coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
-
   const createStudent = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError('');
-    setCreatedPin('');
-    if (!form.name.trim() || !form.standard || !form.roomNumber.trim() || !form.wingNumber.trim()) {
-      setError('Name, standard, room and wing are required.');
-      return;
-    }
-    setSaving(true);
+    event.preventDefault(); setError(''); setCreatedPin('');
+    if (!form.name.trim() || !form.roomNumber.trim() || !form.wingNumber.trim()) { setError('Name, room and wing are required.'); return; }
+    const appPin = makePin(students); setSaving(true);
     try {
-      const response = await fetch('/api/student/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          standard: form.standard,
-          coachingType: form.coachingType,
-          roomNumber: form.roomNumber.trim(),
-          wingNumber: form.wingNumber.trim()
-        })
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result?.error || `Student creation failed (${response.status}).`);
-      const apiStudent = result?.student;
-      if (!apiStudent?.id || !apiStudent?.appPin) throw new Error('Student was created but the App PIN was not returned by the server.');
-
-      const newStudent: Student = {
-        id: String(apiStudent.id),
-        name: String(apiStudent.name || form.name.trim()),
-        pinNumber: `PIN-${normalizePin(apiStudent.appPin)}`,
-        standard: form.standard,
-        isCoachingStudent: form.coachingType === 'Coaching',
-        status: 'Active',
-        assignedTabletId: undefined,
-        createdAt: new Date().toISOString().slice(0, 10)
-      };
-      onSaveStudents([newStudent, ...students.filter((student) => student.id !== newStudent.id)]);
-      setCreatedPin(normalizePin(apiStudent.appPin));
-      setForm({ name: '', standard: 'Std 8', coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Student creation failed.');
-    } finally {
-      setSaving(false);
-    }
+      const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ name: form.name.trim(), pin: appPin, standard: form.standard, coachingType: form.coachingType, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() }) });
+      const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result?.error || `Student creation failed (${response.status}).`);
+      const apiStudent = result?.student; if (!apiStudent?.id) throw new Error('Student was created but no student ID was returned.');
+      const newStudent: Student = { id: String(apiStudent.id), name: String(apiStudent.name || form.name.trim()), pinNumber: `PIN-${appPin}`, standard: form.standard, isCoachingStudent: form.coachingType === 'Coaching', status: 'Active', createdAt: new Date().toISOString().slice(0, 10) };
+      onSaveStudents([newStudent, ...students.filter(student => student.id !== newStudent.id)]); setCreatedPin(appPin); setForm({ name: '', standard: 'Std 8', coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
+    } catch (e) { setError(e instanceof Error ? e.message : 'Student creation failed.'); } finally { setSaving(false); }
   };
-
-  return (
-    <div className="space-y-4 w-full">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Users className="w-6 h-6 text-indigo-600" />Student Directory & Management</h2>
-          <p className="text-xs text-slate-500 mt-1 font-medium">Create students with a server-generated unique 4-digit App PIN. Tablet assignment remains Admin-only.</p>
-        </div>
-        <button onClick={() => { setOpen(true); setError(''); setCreatedPin(''); }} className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm flex items-center gap-2"><Plus className="w-4 h-4" />Create Student</button>
-      </div>
-
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between"><span className="font-bold text-slate-900">Students ({students.length})</span><span className="text-xs text-slate-500">App PIN is generated automatically</span></div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50"><tr><th className="text-left px-6 py-3">Student</th><th className="text-left px-6 py-3">App PIN</th><th className="text-left px-6 py-3">Standard</th><th className="text-left px-6 py-3">Type</th><th className="text-left px-6 py-3">Tablet</th><th className="text-left px-6 py-3">Status</th><th className="px-6 py-3">Action</th></tr></thead>
-            <tbody>{students.map((student) => <tr key={student.id} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">{student.name}</td><td className="px-6 py-4 font-mono font-bold tracking-widest">{student.pinNumber || '—'}</td><td className="px-6 py-4">{student.standard}</td><td className="px-6 py-4">{student.isCoachingStudent ? 'Coaching' : 'Non-Coaching'}</td><td className="px-6 py-4">{student.assignedTabletNumber || student.assignedTabletId || 'Unassigned'}</td><td className="px-6 py-4">{student.status === 'Active' ? <span className="text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />Active</span> : <span className="text-red-600 inline-flex items-center gap-1"><XCircle className="w-4 h-4" />Inactive</span>}</td><td className="px-6 py-4 text-center"><button onClick={() => onQuickAssignTablet(student)} className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 font-semibold"><Tablet className="w-4 h-4" />Assign</button></td></tr>)}</tbody>
-          </table>
-          {students.length === 0 && <div className="p-10 text-center text-slate-500">No students found.</div>}
-        </div>
-      </div>
-
-      {open && <div className="fixed inset-0 z-50 bg-slate-950/40 flex items-center justify-center p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
-        <form onSubmit={createStudent} className="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-7 space-y-4">
-          <div><h3 className="text-xl font-bold">Create Student</h3><p className="text-sm text-slate-500 mt-1">Do not enter a PIN. The server generates a unique 4-digit App PIN automatically.</p></div>
-          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Student Name" className="w-full rounded-xl border border-slate-300 px-4 py-3" autoFocus />
-          <select value={form.standard} onChange={(e) => setForm({ ...form, standard: e.target.value as StandardGrade })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Std 8</option><option>Std 9</option><option>Std 10</option><option>Std 11</option><option>Std 12</option></select>
-          <select value={form.coachingType} onChange={(e) => setForm({ ...form, coachingType: e.target.value })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Coaching</option><option>Non-Coaching</option></select>
-          <div className="grid grid-cols-2 gap-3"><input value={form.roomNumber} onChange={(e) => setForm({ ...form, roomNumber: e.target.value })} placeholder="Room Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /><input value={form.wingNumber} onChange={(e) => setForm({ ...form, wingNumber: e.target.value })} placeholder="Wing Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /></div>
-          {error && <div className="rounded-xl bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>}
-          {createdPin && <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5 text-center"><p className="text-sm font-semibold text-emerald-700">Student created successfully</p><p className="text-xs text-emerald-600 mt-1">Student App PIN</p><p className="text-4xl font-mono font-bold tracking-[0.35em] text-emerald-900 mt-2">{createdPin}</p><p className="text-xs text-emerald-700 mt-3">Give this 4-digit App PIN to the student. Save it before closing this window.</p></div>}
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setOpen(false)} className="px-4 py-3 rounded-xl border border-slate-300 font-semibold">{createdPin ? 'Close' : 'Cancel'}</button>{!createdPin && <button disabled={saving} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-semibold disabled:opacity-60">{saving ? 'Creating...' : 'Create Student'}</button>}</div>
-        </form>
-      </div>}
-    </div>
-  );
+  return <div className="space-y-4 w-full">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><div><h2 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Users className="w-6 h-6 text-indigo-600" />Student Directory & Management</h2><p className="text-xs text-slate-500 mt-1">Admin creates the student; a unique 4-digit App PIN is generated automatically. Tablet assignment remains Admin-only.</p></div><button onClick={() => { setOpen(true); setError(''); setCreatedPin(''); }} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center gap-2"><Plus className="w-4 h-4" />Create Student</button></div>
+    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-6 py-4 border-b border-slate-200 font-bold">Students ({students.length})</div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50"><tr><th className="text-left px-6 py-3">Student</th><th className="text-left px-6 py-3">App PIN</th><th className="text-left px-6 py-3">Standard</th><th className="text-left px-6 py-3">Type</th><th className="text-left px-6 py-3">Tablet</th><th className="text-left px-6 py-3">Status</th><th className="px-6 py-3">Action</th></tr></thead><tbody>{students.map(student => <tr key={student.id} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">{student.name}</td><td className="px-6 py-4 font-mono font-bold tracking-widest">{student.pinNumber || '—'}</td><td className="px-6 py-4">{student.standard}</td><td className="px-6 py-4">{student.isCoachingStudent ? 'Coaching' : 'Non-Coaching'}</td><td className="px-6 py-4">{student.assignedTabletNumber || student.assignedTabletId || 'Unassigned'}</td><td className="px-6 py-4">{student.status === 'Active' ? <span className="text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />Active</span> : <span className="text-red-600 inline-flex items-center gap-1"><XCircle className="w-4 h-4" />Inactive</span>}</td><td className="px-6 py-4 text-center"><button onClick={() => onQuickAssignTablet(student)} className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 font-semibold"><Tablet className="w-4 h-4" />Assign</button></td></tr>)}</tbody></table>{students.length === 0 && <div className="p-10 text-center text-slate-500">No students found.</div>}</div></div>
+    {open && <div className="fixed inset-0 z-50 bg-slate-950/40 flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) setOpen(false); }}><form onSubmit={createStudent} className="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-7 space-y-4"><div><h3 className="text-xl font-bold">Create Student</h3><p className="text-sm text-slate-500 mt-1">PIN is not entered manually. A unique 4-digit App PIN is generated automatically.</p></div><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Student Name" className="w-full rounded-xl border border-slate-300 px-4 py-3" autoFocus /><select value={form.standard} onChange={e => setForm({ ...form, standard: e.target.value as StandardGrade })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Std 8</option><option>Std 9</option><option>Std 10</option><option>Std 11</option><option>Std 12</option></select><select value={form.coachingType} onChange={e => setForm({ ...form, coachingType: e.target.value })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Coaching</option><option>Non-Coaching</option></select><div className="grid grid-cols-2 gap-3"><input value={form.roomNumber} onChange={e => setForm({ ...form, roomNumber: e.target.value })} placeholder="Room Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /><input value={form.wingNumber} onChange={e => setForm({ ...form, wingNumber: e.target.value })} placeholder="Wing Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /></div>{error && <div className="rounded-xl bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>}{createdPin && <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5 text-center"><p className="text-sm font-semibold text-emerald-700">Student created successfully</p><p className="text-xs text-emerald-600 mt-1">Student App PIN</p><p className="text-4xl font-mono font-bold tracking-[0.35em] text-emerald-900 mt-2">{createdPin}</p><p className="text-xs text-emerald-700 mt-3">Give this 4-digit App PIN to the student.</p></div>}<div className="flex justify-end gap-2"><button type="button" onClick={() => setOpen(false)} className="px-4 py-3 rounded-xl border border-slate-300 font-semibold">{createdPin ? 'Close' : 'Cancel'}</button>{!createdPin && <button disabled={saving} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-semibold disabled:opacity-60">{saving ? 'Creating...' : 'Create Student'}</button>}</div></form></div>}
+  </div>;
 };
