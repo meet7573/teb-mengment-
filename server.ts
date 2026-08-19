@@ -6,15 +6,14 @@ import { createPhotoRouter } from './server/photoRoutes';
 
 const currentDir = process.cwd();
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 
 const COLLECTIONS = new Set(['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs', 'studentSessions']);
 const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-function databaseConfigured() {
-  return Boolean(supabaseUrl && supabaseKey);
-}
+function databaseConfigured() { return Boolean(supabaseUrl && supabaseKey); }
 
 async function supabaseRequest(pathname: string, options: RequestInit = {}) {
   if (!databaseConfigured()) throw new Error('Supabase is not configured');
@@ -31,54 +30,50 @@ async function supabaseRequest(pathname: string, options: RequestInit = {}) {
 
 app.use('/api/photos', createPhotoRouter({ supabaseUrl, supabaseKey }));
 
-function valueMatches(value: unknown, target: string): boolean {
-  return String(value ?? '').trim().toLowerCase() === target.trim().toLowerCase();
+function normalizeText(value: unknown): string { return String(value ?? '').trim().toLowerCase(); }
+function normalizeTabletId(value: unknown): string { return String(value ?? '').trim().toUpperCase(); }
+function normalizePin(value: unknown): string {
+  return String(value ?? '').trim().replace(/^pin[-\s:]*/i, '').trim();
 }
-
-function containsKeyValue(value: unknown, keys: string[], target: string, depth = 0): boolean {
-  if (depth > 4 || value == null) return false;
-  if (Array.isArray(value)) return value.some((item) => containsKeyValue(item, keys, target, depth + 1));
+function pinMatches(value: unknown, target: string): boolean {
+  const a = normalizePin(value); const b = normalizePin(target);
+  return Boolean(a && b && a === b);
+}
+function containsPin(value: unknown, target: string, depth = 0): boolean {
+  if (depth > 6 || value == null) return false;
+  if (Array.isArray(value)) return value.some((item) => containsPin(item, target, depth + 1));
   if (typeof value !== 'object') return false;
-
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (keys.includes(key.toLowerCase()) && valueMatches(child, target)) return true;
-    if (typeof child === 'object' && containsKeyValue(child, keys, target, depth + 1)) return true;
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (['pin', 'pinno', 'pinnumber', 'studentpin'].includes(normalizedKey) && pinMatches(child, target)) return true;
+    if (typeof child === 'object' && containsPin(child, target, depth + 1)) return true;
   }
   return false;
 }
 
 async function readCollectionServerSide(collection: string): Promise<any[]> {
-  const response = await supabaseRequest(
-    `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`
-  );
-  if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
+  const response = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Supabase returned ${response.status}${body ? `: ${body}` : ''}`);
+  }
   const rows = await response.json();
   return rows.map((row: { data: unknown }) => row.data);
 }
 
 const activationAttempts = new Map<string, { count: number; resetAt: number }>();
-
 function activationAllowed(ip: string) {
-  const now = Date.now();
-  const current = activationAttempts.get(ip);
-  if (!current || current.resetAt <= now) {
-    activationAttempts.set(ip, { count: 1, resetAt: now + 60_000 });
-    return true;
-  }
+  const now = Date.now(); const current = activationAttempts.get(ip);
+  if (!current || current.resetAt <= now) { activationAttempts.set(ip, { count: 1, resetAt: now + 60_000 }); return true; }
   if (current.count >= 5) return false;
-  current.count += 1;
-  return true;
+  current.count += 1; return true;
 }
 
 app.get('/api/health', async (_req, res) => {
   try {
-    if (!databaseConfigured()) {
-      return res.json({ status: 'ok', database: false, provider: 'supabase' });
-    }
-
+    if (!databaseConfigured()) return res.json({ status: 'ok', database: false, provider: 'supabase' });
     const response = await supabaseRequest('app_data?select=id&limit=1');
     if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
-
     return res.json({ status: 'ok', database: true, provider: 'supabase' });
   } catch (error) {
     console.error('Database health check failed:', error);
@@ -88,56 +83,35 @@ app.get('/api/health', async (_req, res) => {
 
 app.post('/api/student/activate', async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  if (!activationAllowed(ip)) {
-    return res.status(429).json({ error: 'Too many activation attempts. Try again in a minute.' });
-  }
-
+  if (!activationAllowed(ip)) return res.status(429).json({ error: 'Too many activation attempts. Try again in a minute.' });
   if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
 
-  const tabletId = String(req.body?.tabletId ?? '').trim();
-  const pin = String(req.body?.pin ?? '').trim();
-
-  if (!tabletId || !pin || pin.length < 4) {
-    return res.status(400).json({ error: 'Tablet ID and a valid PIN are required.' });
-  }
+  const tabletId = normalizeTabletId(req.body?.tabletId);
+  const pin = normalizePin(req.body?.pin);
+  if (!tabletId || !pin || pin.length < 4) return res.status(400).json({ error: 'Tablet ID and a valid PIN are required.' });
 
   try {
-    // The student record is the source of truth for tablet assignment.
-    // Do not require separate tablets/assignments collections for activation.
-    const [students, sessions] = await Promise.all([
-      readCollectionServerSide('students'),
-      readCollectionServerSide('studentSessions')
-    ]);
-
-    const student = students.find((item) =>
-      containsKeyValue(item, ['pin', 'pinNo', 'pinno', 'pinNumber', 'studentPin', 'studentpin'], pin)
-    );
+    // Student data is the source of truth. Empty tablets/assignments collections are allowed.
+    const [students, sessions] = await Promise.all([readCollectionServerSide('students'), readCollectionServerSide('studentSessions')]);
+    const student = students.find((item) => containsPin(item, pin));
 
     if (!student) {
+      console.warn('Student activation rejected: PIN not found', { tabletId });
       return res.status(401).json({ error: 'Tablet ID or PIN is incorrect.' });
     }
 
-    const assignedTabletId = String(
-      student?.assignedTabletId ?? student?.assignedTabletNumber ?? student?.tabletId ?? ''
-    ).trim();
-
-    if (!assignedTabletId || !valueMatches(assignedTabletId, tabletId)) {
+    const assignedTabletId = normalizeTabletId(student?.assignedTabletId ?? student?.assignedTabletNumber ?? student?.tabletId ?? '');
+    if (!assignedTabletId || assignedTabletId !== tabletId) {
+      console.warn('Student activation rejected: tablet mismatch', { tabletId, assignedTabletId });
       return res.status(401).json({ error: 'Tablet ID or PIN is incorrect.' });
     }
 
     const studentId = String(student?.id ?? student?.studentId ?? student?.studentID ?? '').trim();
-    const tabletKey = assignedTabletId;
+    if (!studentId) return res.status(500).json({ error: 'Student record is missing an ID.' });
 
-    const activeForStudent = sessions.some(
-      (item) => item?.status === 'active' && valueMatches(item?.studentId, studentId)
-    );
-    const activeForTablet = sessions.some(
-      (item) => item?.status === 'active' && valueMatches(item?.tabletId, tabletKey)
-    );
-
-    if (activeForStudent || activeForTablet) {
-      return res.status(409).json({ error: 'This student or tablet already has an active session.' });
-    }
+    const activeForStudent = sessions.some((item) => item?.status === 'active' && normalizeText(item?.studentId) === normalizeText(studentId));
+    const activeForTablet = sessions.some((item) => item?.status === 'active' && normalizeTabletId(item?.tabletId) === tabletId);
+    if (activeForStudent || activeForTablet) return res.status(409).json({ error: 'This student or tablet already has an active session.' });
 
     const sessionToken = randomUUID();
     const startedAt = new Date().toISOString();
@@ -145,8 +119,8 @@ app.post('/api/student/activate', async (req, res) => {
       id: sessionToken,
       sessionToken,
       studentId,
-      tabletId: tabletKey,
-      studentName: String(student?.name ?? student?.studentName ?? 'Student'),
+      tabletId: assignedTabletId,
+      studentName: String(student?.name ?? student?.studentName ?? 'Student').trim() || 'Student',
       startedAt,
       returnedAt: null,
       durationMinutes: null,
@@ -158,21 +132,13 @@ app.post('/api/student/activate', async (req, res) => {
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ collection: 'studentSessions', id: sessionToken, data: session })
     });
-
     if (!insertResponse.ok) {
       const errorBody = await insertResponse.text();
       console.error('Session insert failed:', insertResponse.status, errorBody);
       throw new Error(`Session insert returned ${insertResponse.status}`);
     }
 
-    return res.json({
-      session: {
-        sessionToken,
-        studentName: session.studentName,
-        tabletId: tabletKey,
-        startedAt
-      }
-    });
+    return res.json({ session: { sessionToken, studentName: session.studentName, tabletId: assignedTabletId, startedAt } });
   } catch (error) {
     console.error('Student activation failed:', error);
     return res.status(500).json({ error: 'Activation could not be completed.' });
@@ -181,36 +147,19 @@ app.post('/api/student/activate', async (req, res) => {
 
 app.post('/api/student/return', async (req, res) => {
   if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
-
   const sessionToken = String(req.body?.sessionToken ?? '').trim();
   if (!sessionToken || sessionToken.length > 100) return res.status(400).json({ error: 'Invalid session.' });
-
   try {
-    const response = await supabaseRequest(
-      `app_data?collection=eq.studentSessions&id=eq.${encodeURIComponent(sessionToken)}&select=data&limit=1`
-    );
+    const response = await supabaseRequest(`app_data?collection=eq.studentSessions&id=eq.${encodeURIComponent(sessionToken)}&select=data&limit=1`);
     if (!response.ok) throw new Error(`Session lookup returned ${response.status}`);
-
-    const rows = await response.json();
-    const session = rows[0]?.data;
+    const rows = await response.json(); const session = rows[0]?.data;
     if (!session || session.status !== 'active') return res.status(404).json({ error: 'Active session not found.' });
-
     const returnedAt = new Date().toISOString();
-    const durationMinutes = Math.max(
-      0,
-      Math.round((new Date(returnedAt).getTime() - new Date(session.startedAt).getTime()) / 60_000)
-    );
-    const updatedSession = { ...session, returnedAt, durationMinutes, status: 'returned' };
-
-    const updateResponse = await supabaseRequest(
-      `app_data?collection=eq.studentSessions&id=eq.${encodeURIComponent(sessionToken)}`,
-      {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ data: updatedSession })
-      }
-    );
-
+    const durationMinutes = Math.max(0, Math.round((new Date(returnedAt).getTime() - new Date(session.startedAt).getTime()) / 60_000));
+    const updateResponse = await supabaseRequest(`app_data?collection=eq.studentSessions&id=eq.${encodeURIComponent(sessionToken)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ data: { ...session, returnedAt, durationMinutes, status: 'returned' } })
+    });
     if (!updateResponse.ok) throw new Error(`Session update returned ${updateResponse.status}`);
     return res.json({ ok: true, durationMinutes });
   } catch (error) {
@@ -221,23 +170,13 @@ app.post('/api/student/return', async (req, res) => {
 
 app.get('/api/admin/tablet-usage', async (_req, res) => {
   if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
-
   try {
     const sessions = await readCollectionServerSide('studentSessions');
-    const normalized = sessions
-      .filter((item) => item && item.id && item.startedAt)
-      .map((item) => ({
-        id: String(item.id),
-        studentId: String(item.studentId ?? ''),
-        studentName: String(item.studentName ?? 'Student'),
-        tabletId: String(item.tabletId ?? ''),
-        startedAt: String(item.startedAt),
-        returnedAt: item.returnedAt ? String(item.returnedAt) : null,
-        durationMinutes: item.durationMinutes == null ? null : Number(item.durationMinutes),
-        status: item.status === 'active' ? 'active' : 'returned'
-      }))
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-
+    const normalized = sessions.filter((item) => item && item.id && item.startedAt).map((item) => ({
+      id: String(item.id), studentId: String(item.studentId ?? ''), studentName: String(item.studentName ?? 'Student'), tabletId: String(item.tabletId ?? ''),
+      startedAt: String(item.startedAt), returnedAt: item.returnedAt ? String(item.returnedAt) : null,
+      durationMinutes: item.durationMinutes == null ? null : Number(item.durationMinutes), status: item.status === 'active' ? 'active' : 'returned'
+    })).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     return res.json({ sessions: normalized });
   } catch (error) {
     console.error('Tablet usage read failed:', error);
@@ -249,17 +188,12 @@ app.get('/api/db/:collection', async (req, res) => {
   const { collection } = req.params;
   if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
   if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
-
   try {
-    const response = await supabaseRequest(
-      `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`
-    );
+    const response = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`);
     if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
-    const rows = await response.json();
-    return res.json(rows.map((row: { data: unknown }) => row.data));
+    const rows = await response.json(); return res.json(rows.map((row: { data: unknown }) => row.data));
   } catch (error) {
-    console.error(`Failed to read ${collection}:`, error);
-    return res.status(500).json({ error: 'Failed to read data' });
+    console.error(`Failed to read ${collection}:`, error); return res.status(500).json({ error: 'Failed to read data' });
   }
 });
 
@@ -267,69 +201,42 @@ app.put('/api/db/:collection', async (req, res) => {
   const { collection } = req.params;
   if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
   if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
-
   const items = req.body;
   if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' });
-  if (items.some((item) => !item || typeof item.id !== 'string')) {
-    return res.status(400).json({ error: 'Every item must contain a string id' });
-  }
-
+  if (items.some((item) => !item || typeof item.id !== 'string')) return res.status(400).json({ error: 'Every item must contain a string id' });
   try {
-    const deleteResponse = await supabaseRequest(
-      `app_data?collection=eq.${encodeURIComponent(collection)}`,
-      { method: 'DELETE' }
-    );
+    const deleteResponse = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}`, { method: 'DELETE' });
     if (!deleteResponse.ok) throw new Error(`Delete returned ${deleteResponse.status}`);
-
     if (items.length > 0) {
       const rows = items.map((item) => ({ collection, id: item.id, data: item }));
-      const insertResponse = await supabaseRequest('app_data', {
-        method: 'POST',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify(rows)
-      });
+      const insertResponse = await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(rows) });
       if (!insertResponse.ok) throw new Error(`Insert returned ${insertResponse.status}`);
     }
-
     return res.json({ ok: true, count: items.length });
   } catch (error) {
-    console.error(`Failed to save ${collection}:`, error);
-    return res.status(500).json({ error: 'Failed to save data' });
+    console.error(`Failed to save ${collection}:`, error); return res.status(500).json({ error: 'Failed to save data' });
   }
 });
 
 app.delete('/api/db', async (_req, res) => {
   if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
-
   try {
     const response = await supabaseRequest('app_data?id=not.is.null', { method: 'DELETE' });
     if (!response.ok) throw new Error(`Supabase returned ${response.status}`);
     return res.json({ ok: true });
   } catch (error) {
-    console.error('Failed to reset database:', error);
-    return res.status(500).json({ error: 'Failed to reset data' });
+    console.error('Failed to reset database:', error); return res.status(500).json({ error: 'Failed to reset data' });
   }
 });
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
-    app.use(vite.middlewares);
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares);
   } else {
-    const distPath = path.join(currentDir, 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    const distPath = path.join(currentDir, 'dist'); app.use(express.static(distPath));
+    app.get('*all', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
-
   const PORT = Number(process.env.PORT) || 3000;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
 }
-
-startServer().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+startServer().catch((error) => { console.error('Failed to start server:', error); process.exit(1); });
