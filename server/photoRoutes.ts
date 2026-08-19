@@ -13,9 +13,16 @@ function extension(type: string) { return type === 'image/jpeg' ? 'jpg' : type =
 function decode(dataUrl: string) { const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl); if (!match) throw new Error('Invalid image data.'); const buffer = Buffer.from(match[2], 'base64'); if (!buffer.length || buffer.length > MAX_FILE_BYTES) throw new Error('Image must be 5 MB or less.'); return { type: match[1], buffer }; }
 async function storage(url: string, key: string, pathname: string, options: RequestInit = {}) { return fetch(`${url}/storage/v1/${pathname}`, { ...options, headers: { Authorization: `Bearer ${key}`, apikey: key, ...(options.headers || {}) } }); }
 
-function normalizePin(value: unknown) { const digits = String(value ?? '').replace(/\D/g, ''); return digits.length === 6 ? `PIN-${digits}` : null; }
+// Student App PINs are 4 digits. Keep legacy 6-digit PINs readable so existing records are not broken.
+function normalizePin(value: unknown) {
+  const raw = String(value ?? '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 4) return `PIN-${digits}`;
+  if (digits.length === 6) return `PIN-${digits}`;
+  return null;
+}
 function nextTabletId(used: Set<string>) { for (let n = 1; n <= 9999; n += 1) { const id = `TAB-${String(n).padStart(3, '0')}`; if (!used.has(id)) return id; } return `TAB-${randomUUID().slice(0, 8).toUpperCase()}`; }
-function nextPin(used: Set<string>) { for (let attempt = 0; attempt < 1000; attempt += 1) { const pin = `PIN-${Math.floor(100000 + Math.random() * 900000)}`; if (!used.has(pin)) return pin; } return `PIN-${Date.now().toString().slice(-6)}`; }
+function nextPin(used: Set<string>) { for (let attempt = 0; attempt < 10000; attempt += 1) { const pin = `PIN-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`; if (!used.has(pin)) return pin; } return `PIN-${String(Date.now()).slice(-4)}`; }
 
 export function createPhotoRouter(config: PhotoConfig) {
   const router = Router(); const url = config.supabaseUrl?.replace(/\/$/, ''); const key = config.supabaseKey; const ready = () => Boolean(url && key);
@@ -59,8 +66,8 @@ export function createPhotoRouter(config: PhotoConfig) {
 
   router.post('/student/activate', async (req, res) => {
     if (!ready()) return res.status(503).json({ error: 'Service unavailable.' });
-    const inputPin = String(req.body?.pin || '').trim(); const pin = normalizePin(inputPin) || (inputPin.length === 6 ? `PIN-${inputPin}` : null);
-    if (!pin) return res.status(400).json({ error: 'Enter your 6-digit PIN.' });
+    const inputPin = String(req.body?.pin || '').trim(); const pin = normalizePin(inputPin);
+    if (!pin) return res.status(400).json({ error: 'Enter your 4-digit PIN.' });
     try {
       const response = await db('app_data?collection=eq.students&select=id,data&order=updated_at.asc'); if (!response.ok) throw new Error(`Student lookup returned ${response.status}`); const rows = await response.json();
       const row = rows.find((item: any) => String(item.data?.pinNumber || '').toUpperCase() === pin.toUpperCase()); if (!row) return res.status(401).json({ error: 'Invalid PIN.' });
