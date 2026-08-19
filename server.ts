@@ -20,6 +20,7 @@ async function supabaseRequest(pathname: string, options: RequestInit = {}) {
 app.use('/api/photos', createPhotoRouter({ supabaseUrl, supabaseKey }));
 function normalizeTabletId(value: unknown) { return String(value ?? '').trim().toUpperCase(); }
 function normalizePin(value: unknown) { return String(value ?? '').trim().replace(/^PIN[-\s:]*/i, '').replace(/\D/g, '').trim(); }
+function isValidPin(pin: string) { return /^\d{4}$/.test(pin); }
 function pinHash(pin: string) { return createHash('sha256').update(normalizePin(pin)).digest('hex'); }
 function valueMatches(value: unknown, target: string) { return String(value ?? '').trim().toLowerCase() === target.trim().toLowerCase(); }
 function containsPin(value: unknown, target: string, depth = 0): boolean {
@@ -56,11 +57,11 @@ app.post('/api/student/register', async (req, res) => {
   const coachingType = String(req.body?.coachingType ?? '').trim();
   const roomNumber = String(req.body?.roomNumber ?? '').trim();
   const wingNumber = String(req.body?.wingNumber ?? '').trim();
-  if (!name || !pin || pin.length < 4 || !standard || !roomNumber || !wingNumber) return res.status(400).json({ error: 'Name, PIN, standard, coaching type, room and wing are required.' });
+  if (!name || !isValidPin(pin) || !standard || !roomNumber || !wingNumber) return res.status(400).json({ error: 'Name, a unique 4-digit PIN, standard, coaching type, room and wing are required.' });
   if (!['Coaching', 'Non-Coaching'].includes(coachingType)) return res.status(400).json({ error: 'Coaching type must be Coaching or Non-Coaching.' });
   try {
     const students = await readCollectionServerSide('students');
-    if (students.some((item) => containsPin(item, pin))) return res.status(409).json({ error: 'This student PIN is already registered.' });
+    if (students.some((item) => containsPin(item, pin))) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
     const studentId = randomUUID();
     const student = { id: studentId, name, pinHash: pinHash(pin), standard, coachingType, roomNumber, wingNumber, assignedTabletId: null, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     const response = await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection: 'students', id: studentId, data: student }) });
@@ -75,7 +76,7 @@ app.post('/api/student/activate', async (req, res) => {
   if (!activationAllowed(ip)) return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' });
   if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
   const pin = normalizePin(req.body?.pin);
-  if (!pin || pin.length < 4) return res.status(400).json({ error: 'A valid student PIN is required.' });
+  if (!isValidPin(pin)) return res.status(400).json({ error: 'Student PIN must be exactly 4 digits.' });
   try {
     const [students, sessions] = await Promise.all([readCollectionServerSide('students'), readCollectionServerSide('studentSessions')]);
     const student = students.find((item) => containsPin(item, pin));
@@ -164,7 +165,7 @@ app.put('/api/db/:collection', async (req, res) => {
   } catch (error) { console.error(`Failed to save ${collection}:`, error); return res.status(500).json({ error: 'Failed to save data' }); }
 });
 app.delete('/api/db', async (_req, res) => {
-  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
   try { const response = await supabaseRequest('app_data?id=not.is.null', { method: 'DELETE' }); if (!response.ok) throw new Error(`Supabase returned ${response.status}`); return res.json({ ok: true }); }
   catch (error) { console.error('Failed to reset database:', error); return res.status(500).json({ error: 'Failed to reset data' }); }
 });
