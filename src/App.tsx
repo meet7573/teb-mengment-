@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PhotoSidebar } from './components/PhotoSidebar';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { DashboardView } from './components/Dashboard/DashboardView';
-import { StudentManagement } from './components/Students/StudentManagement';
+import { StudentManagementSafe } from './components/Students/StudentManagementSafe';
 import { TabletManagement } from './components/Tablets/TabletManagement';
 import { TabletBoxManagement } from './components/TabletBoxes/TabletBoxManagement';
 import { TabletAssignmentView } from './components/Assignments/TabletAssignment';
@@ -61,7 +61,7 @@ function MainApp() {
     <main className={`flex-1 transition-all duration-300 min-w-0 ${sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'} ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
       {activeTab === 'dashboard' && <DashboardView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} onNavigate={(tab) => setActiveTab(tab)} />}
       {activeTab === 'attendance' && <DigitalAttendance students={students} attendanceRecords={attendanceRecords} onSaveAttendanceRecords={handleSaveAttendance} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />}
-      {activeTab === 'students' && <StudentManagement students={students} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssignTablet={handleQuickAssignFromStudent} />}
+      {activeTab === 'students' && <StudentManagementSafe students={students} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssignTablet={handleQuickAssignFromStudent} />}
       {activeTab === 'boxes' && <TabletBoxManagement boxes={boxes} tablets={tablets} students={students} onSaveBoxes={handleSaveBoxes} onSaveTablets={handleSaveTablets} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />}
       {activeTab === 'tablets' && <TabletManagement tablets={tablets} students={students} boxes={boxes} onSaveTablets={handleSaveTablets} onSaveBoxes={handleSaveBoxes} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssign={handleQuickAssignFromTablet} />}
       {activeTab === 'assignments' && <TabletAssignmentView assignments={assignments} students={students} tablets={tablets} onSaveAssignments={handleSaveAssignments} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} preselectedStudentForAssign={preselectedStudent} preselectedTabletForAssign={preselectedTablet} onClearPreselections={() => { setPreselectedStudent(null); setPreselectedTablet(null); }} />}
