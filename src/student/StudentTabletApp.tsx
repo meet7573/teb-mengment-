@@ -21,7 +21,7 @@ interface ActiveSession {
 const SESSION_KEY = 'teb_student_session_token';
 
 function normalizePin(value: string) {
-  return value.trim().replace(/^PIN-/i, '').replace(/\D/g, '').slice(0, 12);
+  return value.trim().replace(/^PIN-/i, '').replace(/\D/g, '').slice(0, 4);
 }
 
 function formatElapsed(startedAt: string) {
@@ -83,16 +83,18 @@ export function StudentTabletApp() {
 
   const registrationValid = useMemo(() => Boolean(
     form.name.trim() &&
-    normalizePin(form.pin).length >= 4 &&
+    normalizePin(form.pin).length === 4 &&
     form.standard.trim() &&
     ['Coaching', 'Non-Coaching'].includes(form.coachingType) &&
     form.roomNumber.trim() &&
     form.wingNumber.trim()
   ), [form]);
 
+  const loginValid = normalizePin(pin).length === 4;
+
   async function activate(cleanPin = pin) {
     const normalizedPin = normalizePin(cleanPin);
-    if (!normalizedPin) throw new Error('Enter the student PIN.');
+    if (normalizedPin.length !== 4) throw new Error('Student PIN must be exactly 4 digits.');
 
     const response = await fetch('/api/student/activate', {
       method: 'POST',
@@ -112,6 +114,10 @@ export function StudentTabletApp() {
   async function login() {
     setError('');
     setMessage('');
+    if (!loginValid) {
+      setError('Student PIN must be exactly 4 digits.');
+      return;
+    }
     setLoading(true);
     try {
       await activate();
@@ -129,7 +135,7 @@ export function StudentTabletApp() {
 
     const normalizedPin = normalizePin(form.pin);
     if (!registrationValid) {
-      setError('Please complete all required fields and enter a valid PIN of at least 4 digits.');
+      setError('Please complete all required fields. Student PIN must be exactly 4 digits.');
       return;
     }
 
@@ -150,7 +156,6 @@ export function StudentTabletApp() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result?.error || `Registration failed (${response.status}).`);
 
-      // Registration is intentionally separate from activation because Admin must assign the Tablet ID.
       setForm({ name: '', pin: '', standard: '', coachingType: 'Coaching', roomNumber: '', wingNumber: '' });
       setPin(normalizedPin);
       setMode('login');
@@ -210,19 +215,19 @@ export function StudentTabletApp() {
 
             {mode === 'login' ? (
               <div className="space-y-4">
-                <label className="block"><span className="mb-1.5 block text-sm font-medium">Student PIN</span><input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 12))} inputMode="numeric" type="password" placeholder="Enter PIN" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" /></label>
-                <button type="button" disabled={loading} onClick={login} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Signing in...' : 'Login & Start'}</button>
-                <p className="text-center text-xs text-slate-500">Your tablet is assigned by Admin. You do not enter a Tablet ID.</p>
+                <label className="block"><span className="mb-1.5 block text-sm font-medium">Student PIN</span><input value={pin} maxLength={4} onChange={(e) => setPin(normalizePin(e.target.value))} inputMode="numeric" pattern="[0-9]{4}" type="password" placeholder="Enter 4 digit PIN" className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500" /></label>
+                <button type="button" disabled={loading || !loginValid} onClick={login} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Signing in...' : 'Login & Start'}</button>
+                <p className="text-center text-xs text-slate-500">Enter your own 4 digit PIN. Your tablet is assigned by Admin.</p>
               </div>
             ) : (
               <div className="space-y-3">
                 <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Student Name" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
-                <input value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value.replace(/\D/g, '').slice(0, 12) })} inputMode="numeric" type="password" placeholder="Student PIN Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
+                <input value={form.pin} maxLength={4} onChange={(e) => setForm({ ...form, pin: normalizePin(e.target.value) })} inputMode="numeric" pattern="[0-9]{4}" type="password" placeholder="Create 4 digit Student PIN" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
                 <input value={form.standard} onChange={(e) => setForm({ ...form, standard: e.target.value })} placeholder="Standard" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
                 <select value={form.coachingType} onChange={(e) => setForm({ ...form, coachingType: e.target.value })} className="w-full rounded-xl border border-slate-300 px-4 py-3"><option>Coaching</option><option>Non-Coaching</option></select>
                 <div className="grid grid-cols-2 gap-3"><input value={form.roomNumber} onChange={(e) => setForm({ ...form, roomNumber: e.target.value })} placeholder="Room Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /><input value={form.wingNumber} onChange={(e) => setForm({ ...form, wingNumber: e.target.value })} placeholder="Wing Number" className="w-full rounded-xl border border-slate-300 px-4 py-3" /></div>
-                <button type="button" disabled={loading} onClick={register} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Saving...' : 'Register Student'}</button>
-                <p className="text-center text-xs text-slate-500">After registration, Admin will assign the Tablet ID. You can then login with your PIN.</p>
+                <button type="button" disabled={loading || !registrationValid} onClick={register} className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white disabled:opacity-60">{loading ? 'Saving...' : 'Register Student'}</button>
+                <p className="text-center text-xs text-slate-500">Create your own 4 digit PIN. After registration, Admin will assign the Tablet ID.</p>
               </div>
             )}
           </>
