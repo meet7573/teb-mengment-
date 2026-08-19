@@ -102,21 +102,15 @@ app.post('/api/student/activate', async (req, res) => {
   }
 
   try {
-    // Students are the source of truth for tablet assignment in this app.
-    // StudentManagement persists assignedTabletId/assignedTabletNumber on the
-    // student record, so activation must not require separate tablets or
-    // assignments collections to exist.
+    // The student record is the source of truth for tablet assignment.
+    // Do not require separate tablets/assignments collections for activation.
     const [students, sessions] = await Promise.all([
       readCollectionServerSide('students'),
       readCollectionServerSide('studentSessions')
     ]);
 
     const student = students.find((item) =>
-      containsKeyValue(
-        item,
-        ['pin', 'pinNo', 'pinno', 'pinNumber', 'studentPin', 'studentpin'],
-        pin
-      )
+      containsKeyValue(item, ['pin', 'pinNo', 'pinno', 'pinNumber', 'studentPin', 'studentpin'], pin)
     );
 
     if (!student) {
