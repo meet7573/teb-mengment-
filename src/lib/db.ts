@@ -9,20 +9,21 @@ function setLocalData(collectionName: string, data: any[]) { localStorage.setIte
 
 function normalizeCollectionData(collectionName: string, data: any[]): any[] {
   if (!Array.isArray(data)) return [];
+  const visibleData = collectionName === 'students' ? data.filter((student) => student?.isDeleted !== true && student?.deleted !== true) : data;
   if (collectionName === 'tablets') {
-    return data.map((tablet) => {
+    return visibleData.map((tablet) => {
       const rawStatus = String(tablet?.status ?? '').trim().toLowerCase();
       const status = rawStatus === 'assigned' ? 'Assigned' : rawStatus === 'maintenance' ? 'Maintenance' : 'Available';
       return { ...tablet, status };
     });
   }
   if (collectionName === 'assignments') {
-    return data.map((assignment) => ({
+    return visibleData.map((assignment) => ({
       ...assignment,
       status: String(assignment?.status ?? '').trim().toLowerCase() === 'returned' ? 'Returned' : 'Active',
     }));
   }
-  return data;
+  return visibleData;
 }
 
 async function fetchCollection(collectionName: string): Promise<any[]> {
@@ -61,11 +62,28 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
       throw new Error(`Student credential provisioning failed: ${credentialsResponse.status}`);
     }
     const data = await credentialsResponse.json();
-    setLocalData(collectionName, Array.isArray(data.students) ? data.students : normalizedUpdated);
+    setLocalData(collectionName, Array.isArray(data.students) ? normalizeCollectionData(collectionName, data.students) : normalizedUpdated);
     return;
   }
 
   setLocalData(collectionName, normalizedUpdated);
+}
+
+export async function deleteStudent(student: Student) {
+  const id = String(student?.id ?? '').trim();
+  if (!id) throw new Error('Student ID is required.');
+  const deletedStudent = { ...student, isDeleted: true, isActive: false, status: 'Inactive', deletedAt: new Date().toISOString() };
+  const response = await fetch('/api/db/students', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([deletedStudent]),
+  });
+  if (!response.ok) {
+    if (!import.meta.env.PROD) return;
+    throw new Error(`Student delete failed: ${response.status}`);
+  }
+  const remaining = normalizeCollectionData('students', getLocalData('students').filter((item) => String(item?.id ?? '') !== id));
+  setLocalData('students', remaining);
 }
 
 export async function resetPersistentDatabase() {
