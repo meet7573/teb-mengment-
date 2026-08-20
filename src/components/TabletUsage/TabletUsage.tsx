@@ -14,9 +14,23 @@ export const TabletUsage: React.FC = () => {
 
   const load = async () => {
     setLoading(true); setError('');
-    try { const response = await fetch('/api/admin/tablet-usage'); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Could not load tablet usage.'); setSessions(Array.isArray(data.sessions) ? data.sessions : []); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load tablet usage.'); }
-    finally { setLoading(false); }
+    try {
+      const token = localStorage.getItem('stm_admin_session_token') || '';
+      const response = await fetch('/api/admin/tablet-usage', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        localStorage.removeItem('stm_admin_session_token');
+        window.dispatchEvent(new CustomEvent('stm-admin-session-expired'));
+        throw new Error(data?.error || 'Admin session required. Please login again.');
+      }
+      if (!response.ok) throw new Error(data?.error || 'Could not load tablet usage.');
+      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load tablet usage.');
+    } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
 
