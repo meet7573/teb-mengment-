@@ -30,6 +30,15 @@ function normalizeCollectionData(collectionName: string, data: any[]): any[] {
   }
   if (collectionName === 'tablets') return visibleData.map((tablet) => { const rawStatus = String(tablet?.status ?? '').trim().toLowerCase(); const status = rawStatus === 'assigned' ? 'Assigned' : rawStatus === 'maintenance' ? 'Maintenance' : 'Available'; return { ...tablet, status }; });
   if (collectionName === 'assignments') return visibleData.map((assignment) => ({ ...assignment, status: String(assignment?.status ?? '').trim().toLowerCase() === 'returned' ? 'Returned' : 'Active' }));
+  if (collectionName === 'attendance') {
+    // Older attendance rows can exist without a details array. Attendance and
+    // Reports both iterate over details, so always normalize malformed rows to
+    // a safe, empty array instead of allowing a runtime forEach/map crash.
+    return visibleData.map((record) => ({
+      ...record,
+      details: Array.isArray(record?.details) ? record.details.filter(Boolean) : [],
+    }));
+  }
   return visibleData;
 }
 
