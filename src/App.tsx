@@ -13,7 +13,7 @@ import { PhotoManagement } from './components/PhotoManagement/PhotoManagement';
 import { TabletUsage } from './components/TabletUsage/TabletUsage';
 import { StudentDownload } from './components/StudentDownload/StudentDownload';
 import { AuditLogsModal } from './components/Security/AuditLogsModal';
-import { LoginModal } from './components/Auth/LoginModal';
+import { SuperAdminLogin } from './components/Auth/SuperAdminLogin';
 import { LogoutModal } from './components/Auth/LogoutModal';
 import { UserManagementModal } from './components/Auth/UserManagementModal';
 import { ThemeSettingsModal } from './components/Theme/ThemeSettingsModal';
@@ -40,22 +40,22 @@ function MainApp() {
   const [assignments, setAssignmentsState] = useState<TabletAssignment[]>([]);
   const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>([]);
   useEffect(() => { if (!currentUser) return; const unsubStudents = subscribeToCollection<Student>('students', setStudentsState); const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState); const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState); const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState); const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState); return () => { unsubStudents(); unsubTablets(); unsubBoxes(); unsubAssignments(); unsubAttendance(); }; }, [currentUser]);
-  const [preselectedStudent, setPreselectedStudent] = useState<Student | null>(null);
-  const [preselectedTablet, setPreselectedTablet] = useState<Tablet | null>(null);
   useEffect(() => { document.documentElement.classList.remove('dark'); localStorage.setItem('stm_theme', 'light'); }, []);
   useEffect(() => { const handleKeyDown = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') { e.preventDefault(); setIsSearchOpen(true); } }; window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown); }, []);
   const handleRoleChange = (role: UserRole) => { setActiveRole(role); saveStoredRole(role); };
   const handleLoginSuccess = (user: AppUser) => { setCurrentUserState(user); setActiveRole(user.role); saveStoredRole(user.role); };
-  const handleConfirmLogout = () => { logoutUser(); setCurrentUserState(null); setIsLogoutOpen(false); };
+  const handleConfirmLogout = async () => { const token = localStorage.getItem('stm_admin_session_token'); if (token) await fetch('/api/admin/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined); localStorage.removeItem('stm_admin_session_token'); logoutUser(); setCurrentUserState(null); setIsLogoutOpen(false); };
   const handleSaveStudents = async (updated: Student[]) => { try { await syncCollection('students', students, updated); } catch (e) { console.error('Failed to sync students', e); } };
   const handleSaveTablets = async (updated: Tablet[]) => { try { await syncCollection('tablets', tablets, updated); } catch (e) { console.error('Failed to sync tablets', e); } };
   const handleSaveBoxes = async (updated: TabletBox[]) => { try { await syncCollection('boxes', boxes, updated); } catch (e) { console.error('Failed to sync boxes', e); } };
   const handleSaveAssignments = async (updated: TabletAssignment[]) => { try { await syncCollection('assignments', assignments, updated); } catch (e) { console.error('Failed to sync assignments', e); } };
   const handleSaveAttendance = async (updated: DailyAttendanceRecord[]) => { try { await syncCollection('attendance', attendanceRecords, updated); } catch (e) { console.error('Failed to sync attendance', e); } };
   const handleResetData = () => { clearAllDatabase(); setStudentsState([]); setTabletsState([]); setBoxesState([]); setAssignmentsState([]); setAttendanceRecordsState([]); setIsAuditLogsOpen(false); };
+  const [preselectedStudent, setPreselectedStudent] = useState<Student | null>(null);
+  const [preselectedTablet, setPreselectedTablet] = useState<Tablet | null>(null);
   const handleQuickAssignFromStudent = (student: Student) => { setPreselectedStudent(student); setPreselectedTablet(null); setActiveTab('assignments'); };
   const handleQuickAssignFromTablet = (tablet: Tablet) => { setPreselectedTablet(tablet); setPreselectedStudent(null); setActiveTab('assignments'); };
-  if (!currentUser) return <LoginModal isOpen={true} onLoginSuccess={handleLoginSuccess} />;
+  if (!currentUser) return <SuperAdminLogin isOpen={true} onLoginSuccess={handleLoginSuccess} />;
   return <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex">
     <PhotoSidebar activeTab={activeTab} setActiveTab={setActiveTab} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} currentUser={currentUser} activeRole={activeRole} setActiveRole={handleRoleChange} onOpenSearch={() => setIsSearchOpen(true)} onOpenAuditLogs={() => setIsAuditLogsOpen(true)} onOpenUsersModal={() => setIsUsersModalOpen(true)} onOpenThemeModal={() => setIsThemeModalOpen(true)} onOpenLogout={() => setIsLogoutOpen(true)} />
     <main className={`flex-1 transition-all duration-300 min-w-0 ${sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'} ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
