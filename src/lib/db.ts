@@ -2,6 +2,7 @@ import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, Au
 
 const listeners: Record<string, Set<(data: any[]) => void>> = {};
 const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs'];
+const REFRESH_INTERVAL_MS = 3000;
 
 function adminHeaders(extra: Record<string, string> = {}) {
   const token = localStorage.getItem('stm_admin_session_token') || '';
@@ -20,15 +21,42 @@ function normalizeCollectionData(collectionName: string, data: any[]): any[] {
 }
 
 async function fetchCollection(collectionName: string): Promise<any[]> {
-  const response = await fetch(`/api/db/${collectionName}`, { headers: adminHeaders() });
+  const response = await fetch(`/api/db/${collectionName}?_=${Date.now()}`, { headers: { ...adminHeaders(), 'Cache-Control': 'no-cache' }, cache: 'no-store' });
   if (!response.ok) throw new Error(`Database read failed: ${response.status}`);
   return normalizeCollectionData(collectionName, await response.json());
 }
 
 export function subscribeToCollection<T>(collectionName: string, callback: (data: T[]) => void) {
-  if (!listeners[collectionName]) listeners[collectionName] = new Set(); listeners[collectionName].add(callback);
-  fetchCollection(collectionName).then((data) => setLocalData(collectionName, data)).catch((error) => { if (import.meta.env.PROD) { console.error(`Failed to load ${collectionName} from the database`, error); callback([]); } else callback(normalizeCollectionData(collectionName, getLocalData(collectionName))); });
-  return () => { listeners[collectionName]?.delete(callback); };
+  if (!listeners[collectionName]) listeners[collectionName] = new Set();
+  listeners[collectionName].add(callback);
+
+  let stopped = false;
+  let refreshing = false;
+  const refresh = async () => {
+    if (stopped || refreshing || document.visibilityState === 'hidden') return;
+    refreshing = true;
+    try {
+      const data = await fetchCollection(collectionName);
+      if (!stopped) setLocalData(collectionName, data);
+    } catch (error) {
+      console.error(`Failed to refresh ${collectionName} from the database`, error);
+      if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]);
+    } finally {
+      refreshing = false;
+    }
+  };
+
+  void refresh();
+  const intervalId = window.setInterval(refresh, REFRESH_INTERVAL_MS);
+  const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
+  return () => {
+    stopped = true;
+    window.clearInterval(intervalId);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    listeners[collectionName]?.delete(callback);
+  };
 }
 
 export async function syncCollection<T extends { id: string }>(collectionName: string, _current: T[], updated: T[]) {
