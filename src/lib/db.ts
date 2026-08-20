@@ -16,6 +16,18 @@ function notifyAdminSessionExpired() { window.dispatchEvent(new CustomEvent('stm
 function normalizeCollectionData(collectionName: string, data: any[]): any[] {
   if (!Array.isArray(data)) return [];
   const visibleData = collectionName === 'students' ? data.filter((student) => student?.isDeleted !== true && student?.deleted !== true) : data;
+  if (collectionName === 'students') {
+    return visibleData.map((student) => {
+      const rawStatus = String(student?.status ?? '').trim();
+      // The backend uses Approved for a student who has completed admin approval,
+      // while the Attendance Register expects Active students. Normalize this
+      // presentation state without changing pending/inactive records.
+      if (rawStatus.toLowerCase() === 'approved') {
+        return { ...student, status: 'Active', approvalStatus: 'Approved' };
+      }
+      return student;
+    });
+  }
   if (collectionName === 'tablets') return visibleData.map((tablet) => { const rawStatus = String(tablet?.status ?? '').trim().toLowerCase(); const status = rawStatus === 'assigned' ? 'Assigned' : rawStatus === 'maintenance' ? 'Maintenance' : 'Available'; return { ...tablet, status }; });
   if (collectionName === 'assignments') return visibleData.map((assignment) => ({ ...assignment, status: String(assignment?.status ?? '').trim().toLowerCase() === 'returned' ? 'Returned' : 'Active' }));
   return visibleData;
