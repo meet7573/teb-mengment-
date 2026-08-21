@@ -10,36 +10,13 @@ async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) { if (!
 async function rows(ctx: Ctx, collection: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`); if (!r.ok) throw new Error(`Read ${collection} failed: ${r.status}`); return (await r.json()).map((x: any) => x.data); }
 async function insert(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, 'app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data }) }); if (!r.ok) throw new Error(`Insert ${collection} failed: ${r.status} ${await r.text()}`); }
 async function patch(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data, updated_at: new Date().toISOString() }) }); if (!r.ok) throw new Error(`Update ${collection} failed: ${r.status} ${await r.text()}`); }
-async function sessionFrom(ctx: Ctx, req: express.Request) {
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-  if (!token) return null;
-  const memory = adminSessions.get(token);
-  if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email };
-  try {
-    const records = await rows(ctx, 'adminSessions');
-    const record = records.find((x: any) => String(x?.id) === token && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now());
-    if (!record) return null;
-    adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() });
-    return { token, email: SUPER_ADMIN_EMAIL };
-  } catch (error) { console.error('Persistent admin session lookup failed', error); return null; }
-}
+async function sessionFrom(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return null; const memory = adminSessions.get(token); if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email }; try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === token && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now()); if (!record) return null; adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() }); return { token, email: SUPER_ADMIN_EMAIL }; } catch { return null; } }
 export function requireAdminSession(ctx: Ctx) { return async (req: express.Request, res: express.Response, next: express.NextFunction) => { if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); const session = await sessionFrom(ctx, req); if (!session) return res.status(401).json({ error: 'Admin session required. Please login again.' }); return next(); }; }
 
 export function createAdminRoutes(ctx: Ctx) {
   const router = express.Router();
-  router.post('/login', async (req, res) => {
-    const email = String(req.body?.email || '').trim().toLowerCase();
-    if (email !== SUPER_ADMIN_EMAIL) return res.status(403).json({ error: 'This email is not authorized to access the Admin Dashboard.' });
-    if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' });
-    try {
-      const token = randomUUID();
-      const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
-      adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: Date.now() + 8 * 60 * 60_000 });
-      await insert(ctx, 'adminSessions', token, { id: token, tokenHash: hash(token), email: SUPER_ADMIN_EMAIL, expiresAt, createdAt: new Date().toISOString() });
-      return res.json({ ok: true, sessionToken: token, user: { id: 'super-admin', fullName: 'Super Admin', username: 'superadmin', email: SUPER_ADMIN_EMAIL, role: 'SuperAdmin', status: 'Active' } });
-    } catch (e) { console.error('Admin email login failed', e); return res.status(500).json({ error: 'Admin login failed.' }); }
-  });
-  router.post('/logout', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (token) { adminSessions.delete(token); try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === token); if (record) await patch(ctx, 'adminSessions', token, { ...record, revokedAt: new Date().toISOString(), expiresAt: new Date(0).toISOString() }); } catch (error) { console.error('Admin session revoke failed', error); } } return res.json({ ok: true }); });
+  router.post('/login', async (req, res) => { const email = String(req.body?.email || '').trim().toLowerCase(); if (email !== SUPER_ADMIN_EMAIL) return res.status(403).json({ error: 'This email is not authorized to access the Admin Dashboard.' }); if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); try { const token = randomUUID(); const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString(); adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: Date.now() + 8 * 60 * 60_000 }); await insert(ctx, 'adminSessions', token, { id: token, tokenHash: hash(token), email: SUPER_ADMIN_EMAIL, expiresAt, createdAt: new Date().toISOString() }); return res.json({ ok: true, sessionToken: token, user: { id: 'super-admin', fullName: 'Super Admin', username: 'superadmin', email: SUPER_ADMIN_EMAIL, role: 'SuperAdmin', status: 'Active' } }); } catch { return res.status(500).json({ error: 'Admin login failed.' }); } });
+  router.post('/logout', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (token) { adminSessions.delete(token); try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === token); if (record) await patch(ctx, 'adminSessions', token, { ...record, revokedAt: new Date().toISOString(), expiresAt: new Date(0).toISOString() }); } catch {} } return res.json({ ok: true }); });
   router.get('/students/pending', requireAdminSession(ctx), async (_req, res) => { try { return res.json({ students: (await rows(ctx, 'students')).filter((s: any) => String(s?.status || '').toLowerCase() === 'pending') }); } catch { return res.status(500).json({ error: 'Could not load pending students.' }); } });
 
   router.post('/students/:id/approve', requireAdminSession(ctx), async (req, res) => {
@@ -50,59 +27,22 @@ export function createAdminRoutes(ctx: Ctx) {
       const student = students.find((s: any) => String(s?.id) === studentId);
       if (!student) return res.status(404).json({ error: 'Student not found.' });
       if (String(student.status).trim().toLowerCase() !== 'pending') return res.status(409).json({ error: 'Student is not pending approval.' });
-
-      // A tablet is considered occupied only when it is actually linked to an
-      // approved/active/present student. This also repairs stale tablet status
-      // values such as "Assigned " when the previous student has already
-      // returned/deactivated the tablet.
+      if (!String(student.email || '').trim()) return res.status(409).json({ error: 'Student email ID is required before approval.' });
       const activeStudentStatuses = new Set(['approved', 'active', 'present']);
-      const occupiedTabletIds = new Set(
-        students
-          .filter((s: any) => s?.assignedTabletId && activeStudentStatuses.has(String(s?.status || '').trim().toLowerCase()))
-          .map((s: any) => String(s.assignedTabletId).trim().toUpperCase())
-          .filter(Boolean)
-      );
-
-      const tablet = tablets.find((t: any) => {
-        const id = String(t?.id ?? t?.tabletId ?? t?.tabletNumber ?? '').trim();
-        const status = String(t?.status ?? 'Available').trim().toLowerCase();
-        const assignedStudentId = String(t?.assignedStudentId ?? t?.assignedToStudentId ?? '').trim();
-        const assignedStudent = assignedStudentId ? students.find((s: any) => String(s?.id) === assignedStudentId) : null;
-        const assignedStudentStatus = String(assignedStudent?.status || '').trim().toLowerCase();
-        const isMaintenance = status === 'maintenance';
-        const isExplicitlyAvailable = ['available', 'free', 'unassigned'].includes(status);
-        const isStaleAssigned = ['assigned', 'in use', 'in_use', 'inuse'].includes(status) &&
-          (!assignedStudentId || !assignedStudent || !activeStudentStatuses.has(assignedStudentStatus));
-        const isOccupied = occupiedTabletIds.has(id.toUpperCase());
-        return Boolean(id) && !isMaintenance && !isOccupied && (isExplicitlyAvailable || isStaleAssigned);
-      });
-
-      if (!tablet) {
-        return res.status(409).json({ error: 'No available tablet is currently available. Student remains pending.' });
-      }
-
+      const occupiedTabletIds = new Set(students.filter((s: any) => s?.assignedTabletId && activeStudentStatuses.has(String(s?.status || '').trim().toLowerCase())).map((s: any) => String(s.assignedTabletId).trim().toUpperCase()).filter(Boolean));
+      const tablet = tablets.find((t: any) => { const id = String(t?.id ?? t?.tabletId ?? t?.tabletNumber ?? '').trim(); const status = String(t?.status ?? 'Available').trim().toLowerCase(); const assignedStudentId = String(t?.assignedStudentId ?? t?.assignedToStudentId ?? '').trim(); const assignedStudent = assignedStudentId ? students.find((s: any) => String(s?.id) === assignedStudentId) : null; const assignedStudentStatus = String(assignedStudent?.status || '').trim().toLowerCase(); const isMaintenance = status === 'maintenance'; const isExplicitlyAvailable = ['available', 'free', 'unassigned'].includes(status); const isStaleAssigned = ['assigned', 'in use', 'in_use', 'inuse'].includes(status) && (!assignedStudentId || !assignedStudent || !activeStudentStatuses.has(assignedStudentStatus)); return Boolean(id) && !isMaintenance && !occupiedTabletIds.has(id.toUpperCase()) && (isExplicitlyAvailable || isStaleAssigned); });
+      if (!tablet) return res.status(409).json({ error: 'No available tablet is currently available. Student remains pending.' });
       const tabletId = String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber).trim();
-      const approved = { ...student, status: 'Approved', isActive: true, assignedTabletId: tabletId, approvedAt: new Date().toISOString(), approvedBy: SUPER_ADMIN_EMAIL };
+      const approved = { ...student, status: 'Approved', isActive: true, emailApproved: true, assignedTabletId: tabletId, approvedAt: new Date().toISOString(), approvedBy: SUPER_ADMIN_EMAIL };
       const assignedTablet = { ...tablet, status: 'Assigned', assignedStudentId: studentId, assignedStudentName: student.name, assignedToStudentId: studentId, assignedToStudentName: student.name };
       await patch(ctx, 'students', studentId, approved);
-      await patch(ctx, String(tablet.collection || 'tablets'), String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), assignedTablet);
-      const logId = randomUUID();
-      await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_APPROVED_AUTO_TABLET', studentId, tabletId, by: SUPER_ADMIN_EMAIL, timestamp: new Date().toISOString() });
+      await patch(ctx, 'tablets', String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), assignedTablet);
+      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_APPROVED_AUTO_TABLET', studentId, tabletId, email: student.email, by: SUPER_ADMIN_EMAIL, timestamp: new Date().toISOString() });
       return res.json({ ok: true, student: approved, tablet: assignedTablet });
     } catch (e) { console.error('Approval failed', e); return res.status(500).json({ error: 'Student approval failed.' }); }
   });
 
-  router.get('/checkout-requests', requireAdminSession(ctx), async (_req, res) => { try { const all = await rows(ctx, 'checkoutRequests'); const requests = all.filter((x: any) => String(x?.status || '').trim().toLowerCase() === 'pending').sort((a: any, b: any) => String(b?.requestedAt || '').localeCompare(String(a?.requestedAt || ''))); res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); return res.json({ requests, count: requests.length }); } catch (e) { console.error('Checkout request list failed', e); return res.status(500).json({ error: 'Could not load checkout requests.' }); } });
-  router.post('/checkout-requests/:id/decision', requireAdminSession(ctx), async (req, res) => { const id = String(req.params.id); const decision = String(req.body?.decision || '').toLowerCase(); if (!['approved','rejected'].includes(decision)) return res.status(400).json({ error: 'Decision must be approved or rejected.' }); try { const requests = await rows(ctx, 'checkoutRequests'); const request = requests.find((x: any) => String(x?.id) === id); if (!request || String(request.status || '').toLowerCase() !== 'pending') return res.status(404).json({ error: 'Pending checkout request not found.' }); if (decision === 'rejected') { const updated = { ...request, status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updated); return res.json({ ok: true, request: updated }); } const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.status === 'active' && String(x.studentId) === String(request.studentId)); if (!session) return res.status(409).json({ error: 'Active student session not found.' }); const returnedAt = new Date().toISOString(); const durationMinutes = Math.max(0, Math.round((new Date(returnedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)); const updatedSession = { ...session, returnedAt, durationMinutes, status: 'returned', checkoutApprovedAt: returnedAt, checkoutApprovedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'studentSessions', String(session.id), updatedSession);
-    const attendanceRows = await rows(ctx, 'attendance');
-    const existingAttendance = attendanceRows.find((x: any) => String(x?.sessionId) === String(session.id) && String(x?.studentId) === String(session.studentId));
-    if (existingAttendance) {
-      const updatedAttendance = { ...existingAttendance, sessionId: session.id, studentId: session.studentId, studentName: session.studentName, tabletId: session.tabletId, startedAt: existingAttendance.startedAt || session.startedAt, returnedAt, durationMinutes, status: 'OUT', date: String(existingAttendance.date || returnedAt.slice(0, 10)) };
-      await patch(ctx, 'attendance', String(existingAttendance.id), updatedAttendance);
-    } else {
-      const attendanceId = randomUUID();
-      await insert(ctx, 'attendance', attendanceId, { id: attendanceId, sessionId: session.id, studentId: session.studentId, studentName: session.studentName, tabletId: session.tabletId, startedAt: session.startedAt, returnedAt, durationMinutes, status: 'OUT', date: returnedAt.slice(0,10) });
-    }
-    const tablets = await rows(ctx, 'tablets'); const tablet = tablets.find((t: any) => String(t?.id ?? t?.tabletId ?? t?.tabletNumber) === String(session.tabletId)); if (tablet) await patch(ctx, 'tablets', String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), { ...tablet, status: 'Available', assignedStudentId: null, assignedStudentName: null, assignedToStudentId: null, assignedToStudentName: null }); const students = await rows(ctx, 'students'); const student = students.find((s: any) => String(s?.id) === String(session.studentId)); if (student) await patch(ctx, 'students', String(student.id), { ...student, assignedTabletId: null, status: 'Approved' }); const updatedRequest = { ...request, status: 'approved', decidedAt: returnedAt, decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updatedRequest); return res.json({ ok: true, request: updatedRequest }); } catch (e) { console.error('Checkout decision failed', e); return res.status(500).json({ error: 'Checkout decision failed.' }); } });
+  router.get('/checkout-requests', requireAdminSession(ctx), async (_req, res) => { try { const all = await rows(ctx, 'checkoutRequests'); const requests = all.filter((x: any) => String(x?.status || '').trim().toLowerCase() === 'pending').sort((a: any, b: any) => String(b?.requestedAt || '').localeCompare(String(a?.requestedAt || ''))); res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); return res.json({ requests, count: requests.length }); } catch { return res.status(500).json({ error: 'Could not load checkout requests.' }); } });
+  router.post('/checkout-requests/:id/decision', requireAdminSession(ctx), async (req, res) => { const id = String(req.params.id); const decision = String(req.body?.decision || '').toLowerCase(); if (!['approved','rejected'].includes(decision)) return res.status(400).json({ error: 'Decision must be approved or rejected.' ); try { const requests = await rows(ctx, 'checkoutRequests'); const request = requests.find((x: any) => String(x?.id) === id); if (!request || String(request.status || '').toLowerCase() !== 'pending') return res.status(404).json({ error: 'Pending checkout request not found.' }); if (decision === 'rejected') { const updated = { ...request, status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updated); return res.json({ ok: true, request: updated }); } const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.status === 'active' && String(x.studentId) === String(request.studentId)); if (!session) return res.status(409).json({ error: 'Active student session not found.' }); const returnedAt = new Date().toISOString(); const durationMinutes = Math.max(0, Math.round((new Date(returnedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)); await patch(ctx, 'studentSessions', String(session.id), { ...session, returnedAt, durationMinutes, status: 'returned', checkoutApprovedAt: returnedAt, checkoutApprovedBy: SUPER_ADMIN_EMAIL }); const attendanceRows = await rows(ctx, 'attendance'); const existingAttendance = attendanceRows.find((x: any) => String(x?.sessionId) === String(session.id) && String(x?.studentId) === String(session.studentId)); if (existingAttendance) await patch(ctx, 'attendance', String(existingAttendance.id), { ...existingAttendance, returnedAt, durationMinutes, status: 'OUT' }); else await insert(ctx, 'attendance', randomUUID(), { id: randomUUID(), sessionId: session.id, studentId: session.studentId, studentName: session.studentName, tabletId: session.tabletId, startedAt: session.startedAt, returnedAt, durationMinutes, status: 'OUT', date: returnedAt.slice(0,10) }); const tablets = await rows(ctx, 'tablets'); const tablet = tablets.find((t: any) => String(t?.id ?? t?.tabletId ?? t?.tabletNumber) === String(session.tabletId)); if (tablet) await patch(ctx, 'tablets', String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), { ...tablet, status: 'Available', assignedStudentId: null, assignedStudentName: null, assignedToStudentId: null, assignedToStudentName: null }); const students = await rows(ctx, 'students'); const student = students.find((s: any) => String(s?.id) === String(session.studentId)); if (student) await patch(ctx, 'students', String(student.id), { ...student, assignedTabletId: null, status: 'Approved' }); const updatedRequest = { ...request, status: 'approved', decidedAt: returnedAt, decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updatedRequest); return res.json({ ok: true, request: updatedRequest }); } catch (e) { console.error('Checkout decision failed', e); return res.status(500).json({ error: 'Checkout decision failed.' }); } });
   return router;
 }
