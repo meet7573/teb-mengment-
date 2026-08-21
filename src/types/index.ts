@@ -1,33 +1,9 @@
 export type UserRole = 'Super Admin' | 'Admin' | 'Teacher' | 'Operator';
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  avatar: string;
-}
-
+export interface User { id: string; name: string; email: string; role: UserRole; avatar: string; }
 export type StandardGrade = 'Std 8' | 'Std 9' | 'Std 10' | 'Std 11' | 'Std 12';
 export type StudentStatus = 'Pending' | 'Approved' | 'Active' | 'Present' | 'Inactive';
-
-export interface Student {
-  id: string;
-  name: string;
-  email: string;
-  emailApproved?: boolean;
-  pinNumber: string;
-  standard: StandardGrade;
-  isCoachingStudent: boolean;
-  status: StudentStatus;
-  assignedTabletId?: string;
-  assignedTabletNumber?: string;
-  photoPath?: string;
-  roomNumber?: string;
-  wingNumber?: string;
-  createdAt: string;
-}
-
+export interface Student { id: string; name: string; email?: string; emailApproved?: boolean; pinNumber: string; standard: StandardGrade; isCoachingStudent: boolean; status: StudentStatus; assignedTabletId?: string; assignedTabletNumber?: string; photoPath?: string; roomNumber?: string; wingNumber?: string; createdAt: string; }
 export type TabletStatus = 'Available' | 'Assigned' | 'Maintenance';
 export interface Tablet { id: string; tabletName: string; tabletNumber: string; qrCode: string; barcode: string; brand: string; model: string; entryDate: string; status: TabletStatus; boxId?: string; boxNumber?: string; assignedToStudentId?: string; assignedToStudentName?: string; photoPath?: string; }
 export interface TabletBox { id: string; boxNumber: string; boxName: string; capacity: number; location: string; qrCode: string; tablets: Tablet[]; createdAt: string; }
