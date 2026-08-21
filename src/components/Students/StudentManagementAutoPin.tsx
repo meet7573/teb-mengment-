@@ -20,7 +20,8 @@ export const StudentManagementAutoPin: React.FC<Props> = ({ students, onSaveStud
     if (students.some(s => String(s.email || '').toLowerCase() === email)) { setError('This Email ID is already registered.'); return; }
     setSaving(true); try {
       const appPin = generateLocalUniquePin(students);
-      const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ name: form.name.trim(), email, pin: appPin, standard: form.standard, coachingType: form.coachingType, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() }) });
+      const adminToken = localStorage.getItem('stm_admin_session_token') || '';
+      const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) }, body: JSON.stringify({ name: form.name.trim(), email, pin: appPin, standard: form.standard, coachingType: form.coachingType, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() }) });
       const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result?.error || `Student creation failed (${response.status}).`);
       const apiStudent = result?.student; if (!apiStudent?.id) throw new Error('Student was created but the server did not return a student ID.');
       const newStudent: Student = { id: String(apiStudent.id), name: String(apiStudent.name || form.name.trim()), email, emailApproved: true, pinNumber: `PIN-${appPin}`, standard: form.standard, isCoachingStudent: form.coachingType === 'Coaching', status: 'Pending', roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim(), assignedTabletId: undefined, createdAt: new Date().toISOString().slice(0, 10) };
