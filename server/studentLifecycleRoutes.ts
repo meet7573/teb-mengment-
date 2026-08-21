@@ -12,14 +12,75 @@ async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) {
 }
 async function rows(ctx: Ctx, collection: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`); if (!r.ok) throw new Error(`Read ${collection} failed: ${r.status}`); return (await r.json()).map((x: any) => x.data); }
 async function insert(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, 'app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data }) }); if (!r.ok) throw new Error(`Insert ${collection} failed: ${r.status} ${await r.text()}`); }
+async function patch(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data, updated_at: new Date().toISOString() }) }); if (!r.ok) throw new Error(`Update ${collection} failed: ${r.status} ${await r.text()}`); }
 const attempts = new Map<string, { count: number; resetAt: number }>();
 function allowed(ip: string) { const now = Date.now(); const current = attempts.get(ip); if (!current || current.resetAt <= now) { attempts.set(ip, { count: 1, resetAt: now + 60_000 }); return true; } if (current.count >= 5) return false; current.count += 1; return true; }
+
+async function requireAdmin(ctx: Ctx, req: express.Request) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (!token) return false;
+  try {
+    const sessions = await rows(ctx, 'adminSessions');
+    const session = sessions.find((x: any) => String(x?.id) === token && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now());
+    return Boolean(session);
+  } catch { return false; }
+}
 
 export function createStudentLifecycleRoutes(ctx: Ctx) {
   const router = express.Router();
 
-  // This route is registered before the legacy /api/student/activate handler in server.ts.
-  // It makes email + name + PIN + admin approval mandatory for every student login.
+  // Student records must be created by an authenticated Admin. The supplied
+  // Email ID is immediately stored as the student's authorized login ID.
+  router.post('/register', async (req, res) => {
+    if (!await requireAdmin(ctx, req)) return res.status(401).json({ error: 'Admin session required. Please login again.' });
+    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
+
+    const name = String(req.body?.name ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const pin = normalizePin(req.body?.pin);
+    const standard = String(req.body?.standard ?? '').trim();
+    const coachingType = String(req.body?.coachingType ?? '').trim();
+    const roomNumber = String(req.body?.roomNumber ?? '').trim();
+    const wingNumber = String(req.body?.wingNumber ?? '').trim();
+
+    if (!name || !email || !/^\S+@\S+\.\S+$/.test(email) || !validPin(pin) || !standard || !roomNumber || !wingNumber) {
+      return res.status(400).json({ error: 'Name, valid Email ID, unique 4-digit PIN, standard, room and wing are required.' });
+    }
+    if (!['Coaching', 'Non-Coaching'].includes(coachingType)) return res.status(400).json({ error: 'Coaching type must be Coaching or Non-Coaching.' });
+
+    try {
+      const students = await rows(ctx, 'students');
+      if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered.' });
+      if (students.some((item: any) => normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
+
+      const studentId = randomUUID();
+      const now = new Date().toISOString();
+      const student = {
+        id: studentId,
+        name,
+        email,
+        emailApproved: true,
+        pinHash: hash(pin),
+        pinNumber: `PIN-${pin}`,
+        standard,
+        coachingType,
+        isCoachingStudent: coachingType === 'Coaching',
+        roomNumber,
+        wingNumber,
+        assignedTabletId: null,
+        isActive: true,
+        status: 'Pending',
+        createdAt: now,
+        updatedAt: now
+      };
+      await insert(ctx, 'students', studentId, student);
+      const logId = randomUUID();
+      await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTERED', studentId, email, emailApproved: true, timestamp: now });
+      return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: `PIN-${pin}`, status: 'Pending' }, appPin: pin });
+    } catch (error) { console.error('Student registration failed:', error); return res.status(500).json({ error: 'Student registration could not be completed.' }); }
+  });
+
+  // Student login requires the exact Admin-approved Email ID + Student Name + PIN.
   router.post('/activate', async (req, res) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     if (!allowed(ip)) return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' });
@@ -57,6 +118,24 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
       await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_CHECK_IN', studentId, tabletId: assignedTabletId, sessionId: sessionToken, timestamp: startedAt });
       return res.json({ session: { sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, student: { name: studentName, email, standard: String(student?.standard ?? ''), coachingType: String(student?.coachingType ?? ''), roomNumber: String(student?.roomNumber ?? ''), wingNumber: String(student?.wingNumber ?? ''), tabletId: assignedTabletId } } });
     } catch (error) { console.error('Student email login failed:', error); return res.status(500).json({ error: 'Student login could not be completed.' }); }
+  });
+
+  // A previously issued student session is valid only while the student remains authorized.
+  router.get('/session', async (req, res) => {
+    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!token || token.length > 100) return res.status(401).json({ error: 'Session required.' });
+    try {
+      const sessions = await rows(ctx, 'studentSessions');
+      const session = sessions.find((x: any) => String(x?.id) === token && x?.status === 'active' && x?.sessionTokenHash === hash(token));
+      if (!session) return res.status(401).json({ error: 'Session is no longer active.' });
+      const students = await rows(ctx, 'students');
+      const student = students.find((x: any) => String(x?.id ?? x?.studentId ?? '') === String(session.studentId));
+      if (!student || student.isActive === false) return res.status(401).json({ error: 'Student is no longer active.' });
+      if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' });
+      if (!['approved', 'active', 'present'].includes(String(student.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' });
+      return res.json({ session: { sessionToken: token, studentId: String(session.studentId), studentName: String(student.name ?? session.studentName ?? 'Student'), tabletId: String(session.tabletId), startedAt: String(session.startedAt), student: { name: String(student.name ?? ''), email: String(student.email ?? ''), standard: String(student.standard ?? ''), coachingType: String(student.coachingType ?? ''), roomNumber: String(student.roomNumber ?? ''), wingNumber: String(student.wingNumber ?? ''), tabletId: String(student.assignedTabletId ?? session.tabletId) } } });
+    } catch (error) { console.error('Student session restore failed:', error); return res.status(500).json({ error: 'Could not restore session.' }); }
   });
 
   router.post('/checkout-request', async (req, res) => {
