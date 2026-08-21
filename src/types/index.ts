@@ -14,6 +14,8 @@ export type StudentStatus = 'Pending' | 'Approved' | 'Active' | 'Present' | 'Ina
 export interface Student {
   id: string;
   name: string;
+  email: string;
+  emailApproved?: boolean;
   pinNumber: string;
   standard: StandardGrade;
   isCoachingStudent: boolean;
