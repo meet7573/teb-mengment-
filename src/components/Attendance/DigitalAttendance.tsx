@@ -786,6 +786,20 @@ const query = search?.toLowerCase()?.trim() || '';
     setActiveDetails(updated);
   };
 
+  const persistAttendanceDetails = (details: AttendanceDetail[]) => {
+    const updatedRecord: DailyAttendanceRecord = {
+      ...currentRecord,
+      details,
+      submittedBy: 'System User',
+      submittedAt: `${new Date().toISOString().slice(0, 10)} ${new Date().toLocaleTimeString()}`,
+    };
+    const exists = attendanceRecords.some((r) => r.date === selectedDate);
+    const updatedList = exists
+      ? attendanceRecords.map((r) => (r.date === selectedDate ? updatedRecord : r))
+      : [updatedRecord, ...attendanceRecords];
+    onSaveAttendanceRecords(updatedList);
+  };
+
   const handleCheckIn = (studentId: string) => {
     if (currentRecord.isLocked) return;
     const timeNow = getCurrentTime12h();
@@ -796,12 +810,15 @@ const query = search?.toLowerCase()?.trim() || '';
           status: 'Checked In' as AttendanceStatus,
           checkInTime: d.checkInTime || timeNow,
           cancellationExpiry: d.cancellationExpiry || calculateCancellationExpiry(),
+          checkOutTime: undefined,
+          totalDuration: calculateDuration(d.checkInTime || timeNow, undefined, selectedDate),
           markedAt: new Date().toLocaleTimeString(),
         };
       }
       return d;
     });
     setActiveDetails(updated);
+    persistAttendanceDetails(updated);
   };
 
   const handleCheckOut = (studentId: string) => {
@@ -820,6 +837,7 @@ const query = search?.toLowerCase()?.trim() || '';
       return d;
     });
     setActiveDetails(updated);
+    persistAttendanceDetails(updated);
   };
 
   const handleConfirmCancel = () => {
