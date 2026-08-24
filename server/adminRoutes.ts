@@ -22,20 +22,23 @@ export function createAdminRoutes(ctx: Ctx) {
   router.post('/students/:id/approve', requireAdminSession(ctx), async (req, res) => {
     const studentId = String(req.params.id);
     try {
-      const students = await rows(ctx, 'students'); const tablets = await rows(ctx, 'tablets'); const student = students.find((s: any) => String(s?.id) === studentId);
+      const students = await rows(ctx, 'students');
+      const student = students.find((s: any) => String(s?.id) === studentId);
       if (!student) return res.status(404).json({ error: 'Student not found.' });
       if (String(student.status).trim().toLowerCase() !== 'pending') return res.status(409).json({ error: 'Student is not pending approval.' });
-      if (!String(student.email || '').trim()) return res.status(409).json({ error: 'Student email ID is required before approval.' });
-      const activeStudentStatuses = new Set(['approved', 'active', 'present']);
-      const occupiedTabletIds = new Set(students.filter((s: any) => s?.assignedTabletId && activeStudentStatuses.has(String(s?.status || '').trim().toLowerCase())).map((s: any) => String(s.assignedTabletId).trim().toUpperCase()).filter(Boolean));
-      const tablet = tablets.find((t: any) => { const id = String(t?.id ?? t?.tabletId ?? t?.tabletNumber ?? '').trim(); const status = String(t?.status ?? 'Available').trim().toLowerCase(); const assignedStudentId = String(t?.assignedStudentId ?? t?.assignedToStudentId ?? '').trim(); const assignedStudent = assignedStudentId ? students.find((s: any) => String(s?.id) === assignedStudentId) : null; const assignedStudentStatus = String(assignedStudent?.status || '').trim().toLowerCase(); const isMaintenance = status === 'maintenance'; const isExplicitlyAvailable = ['available', 'free', 'unassigned'].includes(status); const isStaleAssigned = ['assigned', 'in use', 'in_use', 'inuse'].includes(status) && (!assignedStudentId || !assignedStudent || !activeStudentStatuses.has(assignedStudentStatus)); return Boolean(id) && !isMaintenance && !occupiedTabletIds.has(id.toUpperCase()) && (isExplicitlyAvailable || isStaleAssigned); });
-      if (!tablet) return res.status(409).json({ error: 'No available tablet is currently available. Student remains pending.' });
-      const tabletId = String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber).trim();
-      const approved = { ...student, status: 'Approved', isActive: true, emailApproved: true, assignedTabletId: tabletId, approvedAt: new Date().toISOString(), approvedBy: SUPER_ADMIN_EMAIL };
-      const assignedTablet = { ...tablet, status: 'Assigned', assignedStudentId: studentId, assignedStudentName: student.name, assignedToStudentId: studentId, assignedToStudentName: student.name };
-      await patch(ctx, 'students', studentId, approved); await patch(ctx, 'tablets', String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), assignedTablet);
-      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_APPROVED_AUTO_TABLET', studentId, tabletId, email: student.email, by: SUPER_ADMIN_EMAIL, timestamp: new Date().toISOString() });
-      return res.json({ ok: true, student: approved, tablet: assignedTablet });
+      const email = String(student.email || '').trim().toLowerCase();
+      if (!email) return res.status(409).json({ error: 'Student email ID is required before approval.' });
+
+      // Approval is independent from tablet assignment. If all tablets are busy,
+      // the student is still approved and the Admin can assign a tablet later.
+      const approvedAt = new Date().toISOString();
+      const assignedTabletId = String(student.assignedTabletId ?? '').trim();
+      const approved = { ...student, status: 'Approved', isActive: true, emailApproved: true, assignedTabletId: assignedTabletId || null, approvedAt, approvedBy: SUPER_ADMIN_EMAIL };
+      await patch(ctx, 'students', studentId, approved);
+
+      const logId = randomUUID();
+      await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_APPROVED', studentId, email, by: SUPER_ADMIN_EMAIL, timestamp: approvedAt, tabletId: assignedTabletId || null });
+      return res.json({ ok: true, student: approved, tablet: null, message: assignedTabletId ? 'Student approved and existing tablet assignment retained.' : 'Student approved successfully. Assign an available tablet when ready.' });
     } catch (e) { console.error('Approval failed', e); return res.status(500).json({ error: 'Student approval failed.' }); }
   });
   router.get('/checkout-requests', requireAdminSession(ctx), async (_req, res) => { try { const all = await rows(ctx, 'checkoutRequests'); const requests = all.filter((x: any) => String(x?.status || '').trim().toLowerCase() === 'pending').sort((a: any, b: any) => String(b?.requestedAt || '').localeCompare(String(a?.requestedAt || ''))); res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); return res.json({ requests, count: requests.length }); } catch { return res.status(500).json({ error: 'Could not load checkout requests.' }); } });
