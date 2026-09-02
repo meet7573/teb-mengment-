@@ -1,7 +1,7 @@
-import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, AttendanceDetail, AttendanceStatus, AuditLog } from '../types';
+import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, AttendanceDetail, AttendanceStatus, AuditLog, TabletMovement } from '../types';
 
 const listeners: Record<string, Set<(data: any[]) => void>> = {};
-const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs'];
+const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'auditLogs'];
 const REFRESH_INTERVAL_MS = 3000;
 
 function adminHeaders(extra: Record<string, string> = {}) {
