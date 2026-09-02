@@ -6,9 +6,9 @@ interface TabletAssignmentProps {
   assignments: TabletAssignment[];
   students: Student[];
   tablets: Tablet[];
-  onSaveAssignments: (updatedAssignments: TabletAssignment[]) => void;
-  onSaveStudents: (updatedStudents: Student[]) => void;
-  onSaveTablets: (updatedTablets: Tablet[]) => void;
+  onSaveAssignments: (updatedAssignments: TabletAssignment[]) => Promise<void>;
+  onSaveStudents: (updatedStudents: Student[]) => Promise<void>;
+  onSaveTablets: (updatedTablets: Tablet[]) => Promise<void>;
   activeRole: UserRole;
   preselectedStudentForAssign?: Student | null;
   preselectedTabletForAssign?: Tablet | null;
@@ -164,10 +164,21 @@ export const TabletAssignmentView: React.FC<TabletAssignmentProps> = ({
         : student
     );
 
-    onSaveAssignments([newAssignment, ...assignments]);
-    onSaveStudents(updatedStudents);
-    onSaveTablets(updatedTablets);
-    closeAssignModal();
+    try {
+      // Save all three related collections before closing the dialog.
+      // Previously these async saves were fire-and-forget, which could make an
+      // assignment look successful in the UI while the database rejected it.
+      await Promise.all([
+        onSaveAssignments([newAssignment, ...assignments]),
+        onSaveStudents(updatedStudents),
+        onSaveTablets(updatedTablets),
+      ]);
+      closeAssignModal();
+    } catch (error) {
+      console.error('Tablet assignment save failed:', error);
+      window.alert('Tablet assignment could not be saved to the database. Please try again.');
+      setIsSaving(false);
+    }
   };
 
   const handleConfirmReturn = () => {
@@ -194,10 +205,14 @@ export const TabletAssignmentView: React.FC<TabletAssignmentProps> = ({
         : tablet
     );
 
-    onSaveAssignments(updatedAssignments);
-    onSaveStudents(updatedStudents);
-    onSaveTablets(updatedTablets);
-    setReturningAssignment(null);
+    Promise.all([
+      onSaveAssignments(updatedAssignments),
+      onSaveStudents(updatedStudents),
+      onSaveTablets(updatedTablets),
+    ]).then(() => setReturningAssignment(null)).catch((error) => {
+      console.error('Tablet return save failed:', error);
+      window.alert('Tablet return could not be saved to the database.');
+    });
   };
 
   const activeStudents = students.filter((student) => student.status === 'Active');
