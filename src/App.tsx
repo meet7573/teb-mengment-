@@ -22,7 +22,7 @@ import { StudentTabletApp } from './student/StudentTabletApp';
 import { getStoredRole, saveStoredRole, clearAllDatabase } from './utils/storage';
 import { subscribeToCollection, syncCollection } from './lib/db';
 import { AppUser, getCurrentUser, logoutUser } from './utils/auth';
-import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, UserRole } from './types';
+import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, TabletMovement, UserRole } from './types';
 
 const DigitalAttendance = lazy(() => import('./components/Attendance/DigitalAttendance').then((module) => ({ default: module.DigitalAttendance })));
 const ReportsView = lazy(() => import('./components/Reports/ReportsView').then((module) => ({ default: module.ReportsView })));
@@ -52,9 +52,10 @@ function MainApp() {
   const [boxes, setBoxesState] = useState<TabletBox[]>([]);
   const [assignments, setAssignmentsState] = useState<TabletAssignment[]>([]);
   const [attendanceRecords, setAttendanceRecordsState] = useState<DailyAttendanceRecord[]>([]);
+  const [movements, setMovementsState] = useState<TabletMovement[]>([]);
 
   useEffect(() => { const handleExpired = () => { localStorage.removeItem('stm_admin_session_token'); logoutUser(); setCurrentUserState(null); setStudentsState([]); setTabletsState([]); setBoxesState([]); setAssignmentsState([]); setAttendanceRecordsState([]); }; window.addEventListener('stm-admin-session-expired', handleExpired); return () => window.removeEventListener('stm-admin-session-expired', handleExpired); }, []);
-  useEffect(() => { if (!currentUser) return; const unsubStudents = subscribeToCollection<Student>('students', setStudentsState); const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState); const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState); const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState); const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState); return () => { unsubStudents(); unsubTablets(); unsubBoxes(); unsubAssignments(); unsubAttendance(); }; }, [currentUser]);
+  useEffect(() => { if (!currentUser) return; const unsubStudents = subscribeToCollection<Student>('students', setStudentsState); const unsubTablets = subscribeToCollection<Tablet>('tablets', setTabletsState); const unsubBoxes = subscribeToCollection<TabletBox>('boxes', setBoxesState); const unsubAssignments = subscribeToCollection<TabletAssignment>('assignments', setAssignmentsState); const unsubAttendance = subscribeToCollection<DailyAttendanceRecord>('attendance', setAttendanceRecordsState); const unsubMovements = subscribeToCollection<TabletMovement>('movements', setMovementsState); return () => { unsubStudents(); unsubTablets(); unsubBoxes(); unsubAssignments(); unsubAttendance(); unsubMovements(); }; }, [currentUser]);
   useEffect(() => { document.documentElement.classList.remove('dark'); localStorage.setItem('stm_theme', 'light'); }, []);
   useEffect(() => { const handleKeyDown = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key?.toLowerCase() === 'k') { e.preventDefault(); setIsSearchOpen(true); } }; window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown); }, []);
 
@@ -66,6 +67,7 @@ function MainApp() {
   const handleSaveBoxes = async (updated: TabletBox[]) => { try { await syncCollection('boxes', boxes, updated); } catch (e) { console.error('Failed to sync boxes', e); } };
   const handleSaveAssignments = async (updated: TabletAssignment[]) => { try { await syncCollection('assignments', assignments, updated); } catch (e) { console.error('Failed to sync assignments', e); } };
   const handleSaveAttendance = async (updated: DailyAttendanceRecord[]) => { try { await syncCollection('attendance', attendanceRecords, updated); } catch (e) { console.error('Failed to sync attendance', e); } };
+  const handleSaveMovements = async (updated: TabletMovement[]) => { try { await syncCollection('movements', movements, updated); } catch (e) { console.error('Failed to sync movements', e); throw e; } };
   const handleResetData = () => { clearAllDatabase(); setStudentsState([]); setTabletsState([]); setBoxesState([]); setAssignmentsState([]); setAttendanceRecordsState([]); setIsAuditLogsOpen(false); };
   const [preselectedStudent, setPreselectedStudent] = useState<Student | null>(null);
   const [preselectedTablet, setPreselectedTablet] = useState<Tablet | null>(null);
@@ -84,7 +86,7 @@ function MainApp() {
     {activeTab === 'reports' && <PageErrorBoundary pageName="Reports"><Suspense fallback={pageFallback}><ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} /></Suspense></PageErrorBoundary>}
     {activeTab === 'photo-management' && <PhotoManagement students={students} tablets={tablets} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} />}
     {activeTab === 'tablet-usage' && <TabletUsage />}
-    {activeTab === 'tablet-movement' && <PageErrorBoundary pageName="Tablet Movement"><TabletMovementManagement /></PageErrorBoundary>}
+    {activeTab === 'tablet-movement' && <PageErrorBoundary pageName="Tablet Movement"><TabletMovementManagement movements={movements} students={students} tablets={tablets} assignments={assignments} activeRole={activeRole} onSave={handleSaveMovements} /></PageErrorBoundary>}
     {activeTab === 'student-download' && <StudentDownload />}
     {activeTab === 'settings' && <SettingsView activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onRoleChange={handleRoleChange} onResetData={handleResetData} />}
   </main><GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} /><AuditLogsModal isOpen={isAuditLogsOpen} onClose={() => setIsAuditLogsOpen(false)} onResetData={handleResetData} /><ThemeSettingsModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} /><LogoutModal isOpen={isLogoutOpen} onClose={() => setIsLogoutOpen(false)} onConfirmLogout={handleConfirmLogout} userName={currentUser?.fullName} /></div>;
