@@ -76,6 +76,29 @@ function buildCandidates(students:Student[], tablets:Tablet[], assignments:Table
     });
   });
 
+  // Final recovery path: the inventory itself may contain an assigned tablet
+  // even when an older Student/Assignment row was not persisted correctly.
+  tablets
+    .filter(tablet => Boolean(tablet.assignedToStudentId || tablet.assignedToStudentName) || String(tablet.status).toLowerCase() === 'assigned')
+    .forEach(tablet => {
+      const studentId = String(tablet.assignedToStudentId ?? '').trim();
+      const matchingStudent = students.find(student => String(student.id) === studentId)
+        || students.find(student => String(student.name ?? '').trim().toLowerCase() === String(tablet.assignedToStudentName ?? '').trim().toLowerCase());
+      const resolvedStudentId = studentId || matchingStudent?.id || '';
+      const resolvedStudentName = String(tablet.assignedToStudentName ?? matchingStudent?.name ?? '').trim();
+      if (!resolvedStudentId || !resolvedStudentName) return;
+      add({
+        id: 'tablet-link-' + tablet.id,
+        assignmentId: 'tablet-link-' + tablet.id,
+        studentId: resolvedStudentId,
+        studentName: resolvedStudentName,
+        pinNumber: String(matchingStudent?.pinNumber ?? ''),
+        tabletId: tablet.id,
+        tabletName: tablet.tabletName || tablet.tabletNumber,
+        tabletNumber: tablet.tabletNumber
+      });
+    });
+
   return result.sort((a,b) => a.studentName.localeCompare(b.studentName));
 }
 
