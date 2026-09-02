@@ -10,6 +10,7 @@ import { TabletAssignmentView } from './components/Assignments/TabletAssignment'
 import { SettingsView } from './components/Settings/SettingsView';
 import { PhotoManagement } from './components/PhotoManagement/PhotoManagement';
 import { TabletUsage } from './components/TabletUsage/TabletUsage';
+import { TabletMovementManagement } from './components/TabletMovement/TabletMovementManagement';
 import { StudentDownload } from './components/StudentDownload/StudentDownload';
 import { AuditLogsModal } from './components/Security/AuditLogsModal';
 import { SuperAdminLogin } from './components/Auth/SuperAdminLogin';
@@ -83,6 +84,7 @@ function MainApp() {
     {activeTab === 'reports' && <PageErrorBoundary pageName="Reports"><Suspense fallback={pageFallback}><ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} /></Suspense></PageErrorBoundary>}
     {activeTab === 'photo-management' && <PhotoManagement students={students} tablets={tablets} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} />}
     {activeTab === 'tablet-usage' && <TabletUsage />}
+    {activeTab === 'tablet-movement' && <PageErrorBoundary pageName="Tablet Movement"><TabletMovementManagement /></PageErrorBoundary>}
     {activeTab === 'student-download' && <StudentDownload />}
     {activeTab === 'settings' && <SettingsView activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onRoleChange={handleRoleChange} onResetData={handleResetData} />}
   </main><GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} /><AuditLogsModal isOpen={isAuditLogsOpen} onClose={() => setIsAuditLogsOpen(false)} onResetData={handleResetData} /><ThemeSettingsModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} /><LogoutModal isOpen={isLogoutOpen} onClose={() => setIsLogoutOpen(false)} onConfirmLogout={handleConfirmLogout} userName={currentUser?.fullName} /></div>;
