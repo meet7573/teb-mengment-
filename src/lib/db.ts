@@ -169,11 +169,37 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
   if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
   if (collectionName === 'students') {
-    const role = localStorage.getItem('stm_active_role_v3') || '';
-    const credentialsResponse = await fetch('/api/photos/student/credentials', { method: 'POST', headers: adminHeaders({ 'x-admin-role': role }), body: JSON.stringify({ studentIds: normalizedUpdated.map((item) => item.id) }) });
-    if (credentialsResponse.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-    if (!credentialsResponse.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Student credential provisioning failed: ${credentialsResponse.status}`); }
-    const data = await credentialsResponse.json(); setLocalData(collectionName, Array.isArray(data.students) ? normalizeCollectionData(collectionName, data.students) : normalizedUpdated); return;
+    // Student data is already successfully persisted above. Credential/photo
+    // provisioning is an optional follow-up and must never make a successful
+    // tablet assignment look like a database failure.
+    try {
+      const role = localStorage.getItem('stm_active_role_v3') || '';
+      const credentialsResponse = await fetch('/api/photos/student/credentials', {
+        method: 'POST',
+        headers: adminHeaders({ 'x-admin-role': role }),
+        body: JSON.stringify({ studentIds: normalizedUpdated.map((item) => item.id) })
+      });
+      if (credentialsResponse.status === 401) {
+        localStorage.removeItem('stm_admin_session_token');
+        notifyAdminSessionExpired();
+        throw new Error('Admin session expired. Please login again.');
+      }
+      if (credentialsResponse.ok) {
+        const data = await credentialsResponse.json();
+        setLocalData(collectionName, Array.isArray(data.students)
+          ? normalizeCollectionData(collectionName, data.students)
+          : normalizedUpdated);
+        return;
+      }
+      console.warn(`Student credential provisioning skipped: ${credentialsResponse.status}`);
+    } catch (error) {
+      // Only the already-saved student data matters for this operation.
+      // Keep the UI consistent with the database and do not fail assignments.
+      if (String(error).includes('Admin session expired')) throw error;
+      console.warn('Student credential provisioning skipped:', error);
+    }
+    setLocalData(collectionName, normalizedUpdated);
+    return;
   }
   setLocalData(collectionName, normalizedUpdated);
 }
