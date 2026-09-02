@@ -102,7 +102,42 @@ app.post('/api/student/return', async (req, res) => { if (!databaseConfigured())
 app.get('/api/admin/tablet-usage', requireAdminSession({ supabaseUrl, supabaseKey }), async (_req, res) => { if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' }); try { const sessions = await readCollectionServerSide('studentSessions'); const normalized = sessions.filter((item) => item && item.id && item.startedAt).map((item) => ({ id: String(item.id), studentId: String(item.studentId ?? ''), studentName: String(item.studentName ?? 'Student'), tabletId: String(item.tabletId ?? ''), startedAt: String(item.startedAt), returnedAt: item.returnedAt ? String(item.returnedAt) : null, durationMinutes: item.durationMinutes == null ? null : Number(item.durationMinutes), status: item.status === 'active' ? 'active' : 'returned' })).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()); return res.json({ sessions: normalized }); } catch (error) { console.error('Tablet usage read failed:', error); return res.status(500).json({ error: 'Could not load tablet usage.' }); } });
 
 app.get('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); try { return res.json(await readCollectionServerSide(collection)); } catch (error) { console.error(`Failed to read ${collection}:`, error); return res.status(500).json({ error: 'Failed to read data' }); } });
-app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try { for (const item of items) { const id = String(item?.id ?? '').trim(); if (!id) continue; const response = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: item, updated_at: new Date().toISOString() }) }); if (!response.ok) { const body = await response.text(); console.error(`Supabase ${collection} update failed:`, response.status, body); throw new Error(`Supabase returned ${response.status}`); } } return res.json({ ok: true }); } catch (error) { console.error(`Failed to update ${collection}:`, error); return res.status(500).json({ error: 'Failed to update data' }); } });
+app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try {
+  // True UPSERT: older code only PATCHed rows, so newly created assignments
+  // could disappear after the next refresh because no database row existed.
+  for (const item of items) {
+    const id = String(item?.id ?? '').trim();
+    if (!id) continue;
+
+    const existingResponse = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}&select=id&limit=1`);
+    if (!existingResponse.ok) {
+      const body = await existingResponse.text();
+      console.error(`Supabase ${collection} lookup failed:`, existingResponse.status, body);
+      throw new Error(`Supabase returned ${existingResponse.status}`);
+    }
+    const existingRows = await existingResponse.json();
+    const now = new Date().toISOString();
+
+    const response = Array.isArray(existingRows) && existingRows.length > 0
+      ? await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ data: item, updated_at: now })
+        })
+      : await supabaseRequest('app_data', {
+          method: 'POST',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ collection, id, data: item, updated_at: now })
+        });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`Supabase ${collection} save failed:`, response.status, body);
+      throw new Error(`Supabase returned ${response.status}`);
+    }
+  }
+  return res.json({ ok: true });
+} catch (error) { console.error(`Failed to update ${collection}:`, error); return res.status(500).json({ error: 'Failed to update data' }); } });
 
 async function startServer() { const isProd = process.env.NODE_ENV === 'production'; const port = Number(process.env.PORT || 3000); if (!isProd) { const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); } else { app.use(express.static(path.join(currentDir, 'dist'))); app.get('*', (_req, res) => res.sendFile(path.join(currentDir, 'dist', 'index.html'))); } app.listen(port, '0.0.0.0', () => console.log(`Server listening on http://0.0.0.0:${port}`)); }
 startServer().catch((error) => { console.error(error); process.exit(1); });
