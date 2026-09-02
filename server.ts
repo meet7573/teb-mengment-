@@ -55,6 +55,27 @@ function activationAllowed(ip: string) { const now = Date.now(); const current =
 
 app.get('/api/health', async (_req, res) => { try { if (!databaseConfigured()) return res.json({ status: 'ok', database: false, provider: 'supabase' }); const response = await supabaseRequest('app_data?select=id&limit=1'); if (!response.ok) throw new Error(`Supabase returned ${response.status}`); return res.json({ status: 'ok', database: true, provider: 'supabase' }); } catch (error) { console.error('Database health check failed:', error); return res.status(503).json({ status: 'error', database: false, provider: 'supabase' }); } });
 
+// Secure full database reset. This intentionally clears only application data
+// stored in app_data; it does not alter the Supabase schema.
+app.delete('/api/db', requireAdminSession({ supabaseUrl, supabaseKey }), async (_req, res) => {
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+  try {
+    const response = await supabaseRequest('app_data?collection=not.is.null', {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' }
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      console.error('Database reset failed:', response.status, body);
+      return res.status(500).json({ error: 'Failed to reset database' });
+    }
+    return res.json({ ok: true, message: 'All application records were cleared.' });
+  } catch (error) {
+    console.error('Database reset error:', error);
+    return res.status(500).json({ error: 'Failed to reset database' });
+  }
+});
+
 app.post('/api/student/register', async (req, res) => {
   if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' });
   const name = String(req.body?.name ?? '').trim(); const pin = normalizePin(req.body?.pin); const standard = String(req.body?.standard ?? '').trim(); const coachingType = String(req.body?.coachingType ?? '').trim(); const roomNumber = String(req.body?.roomNumber ?? '').trim(); const wingNumber = String(req.body?.wingNumber ?? '').trim();
