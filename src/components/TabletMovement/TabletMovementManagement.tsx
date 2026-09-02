@@ -30,30 +30,53 @@ const badge: Record<TabletMovement['status'],string> = {
 function buildCandidates(students:Student[], tablets:Tablet[], assignments:TabletAssignment[]):Candidate[] {
   const result:Candidate[] = [];
   const used = new Set<string>();
-  const add = (student:Student|undefined, tablet:Tablet|undefined, assignmentId:string) => {
-    if (!student || !tablet) return;
-    const key = student.id + '|' + tablet.id;
-    if (used.has(key)) return;
+
+  const add = (candidate:Candidate) => {
+    const key = candidate.studentId + '|' + candidate.tabletId;
+    if (!candidate.studentId || !candidate.tabletId || used.has(key)) return;
     used.add(key);
-    result.push({
-      id:key, assignmentId, studentId:student.id, studentName:student.name, pinNumber:student.pinNumber,
-      tabletId:tablet.id, tabletName:tablet.tabletName || tablet.tabletNumber, tabletNumber:tablet.tabletNumber
-    });
+    result.push(candidate);
   };
 
-  assignments.filter(a => String(a.status).toLowerCase() === 'active').forEach(a => {
-    add(students.find(s => s.id === a.studentId), tablets.find(t => t.id === a.tabletId), a.id);
-  });
+  // Assignment records are the primary source. Use the assignment data itself
+  // so the dropdown still works even if older Student/Tablet records use
+  // different IDs or have not yet refreshed.
+  assignments
+    .filter(a => String(a.status ?? '').toLowerCase() !== 'returned')
+    .forEach(a => add({
+      id: 'assignment-' + a.id,
+      assignmentId: a.id,
+      studentId: String(a.studentId ?? ''),
+      studentName: String(a.studentName ?? 'Student'),
+      pinNumber: String(a.pinNumber ?? ''),
+      tabletId: String(a.tabletId ?? a.tabletNumber ?? ''),
+      tabletName: String(a.tabletName ?? a.tabletNumber ?? 'Tablet'),
+      tabletNumber: String(a.tabletNumber ?? a.tabletName ?? '')
+    }));
 
+  // Fallback: resolve every existing student-to-tablet connection.
   students.forEach(student => {
+    const assignedId = String(student.assignedTabletId ?? '').trim();
+    const assignedNumber = String(student.assignedTabletNumber ?? '').trim();
     const tablet =
-      tablets.find(t => t.id === student.assignedTabletId) ||
-      tablets.find(t => t.assignedToStudentId === student.id) ||
-      tablets.find(t => t.assignedToStudentName?.trim().toLowerCase() === student.name.trim().toLowerCase());
-    add(student, tablet, 'linked-' + student.id + '-' + (tablet?.id || ''));
+      tablets.find(t => String(t.id) === assignedId) ||
+      tablets.find(t => String(t.tabletNumber).trim().toLowerCase() === assignedNumber.toLowerCase()) ||
+      tablets.find(t => String(t.assignedToStudentId ?? '') === String(student.id)) ||
+      tablets.find(t => String(t.assignedToStudentName ?? '').trim().toLowerCase() === String(student.name ?? '').trim().toLowerCase());
+
+    if (tablet) add({
+      id: 'linked-' + student.id + '-' + tablet.id,
+      assignmentId: 'linked-' + student.id + '-' + tablet.id,
+      studentId: student.id,
+      studentName: student.name,
+      pinNumber: student.pinNumber,
+      tabletId: tablet.id,
+      tabletName: tablet.tabletName || tablet.tabletNumber,
+      tabletNumber: tablet.tabletNumber
+    });
   });
 
-  return result;
+  return result.sort((a,b) => a.studentName.localeCompare(b.studentName));
 }
 
 export const TabletMovementManagement:React.FC<Props> = ({movements,students,tablets,assignments,activeRole,onSave}) => {
