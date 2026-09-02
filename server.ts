@@ -11,7 +11,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 
-const COLLECTIONS = new Set(['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions']);
+const COLLECTIONS = new Set(['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions']);
 const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 function databaseConfigured() { return Boolean(supabaseUrl && supabaseKey); }
