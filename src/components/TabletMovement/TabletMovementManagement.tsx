@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ClipboardList, Plus, Search, Filter, Pencil, Trash2, CheckCircle2, XCircle, LogOut, RotateCcw, X } from 'lucide-react';
+import { ClipboardList, Plus, Search, Pencil, Trash2, CheckCircle2, XCircle, LogOut, RotateCcw, X } from 'lucide-react';
 import { Student, Tablet, TabletAssignment, UserRole, TabletMovement } from '../../types';
 import { logAuditAction } from '../../utils/storage';
 
@@ -12,79 +12,141 @@ interface Props {
   onSave: (items: TabletMovement[]) => Promise<void> | void;
 }
 
-const statusClass: Record<TabletMovement['status'], string> = {
-  PENDING:'bg-amber-50 text-amber-700 border-amber-200', APPROVED:'bg-blue-50 text-blue-700 border-blue-200',
-  REJECTED:'bg-rose-50 text-rose-700 border-rose-200', OUTSIDE:'bg-violet-50 text-violet-700 border-violet-200',
-  RETURNED:'bg-emerald-50 text-emerald-700 border-emerald-200', OVERDUE:'bg-red-50 text-red-700 border-red-200'
+type Candidate = { id:string; assignmentId:string; studentId:string; studentName:string; pinNumber:string; tabletId:string; tabletName:string; tabletNumber:string };
+
+const today = () => new Date().toISOString().slice(0,10);
+const currentStatus = (m:TabletMovement):TabletMovement['status'] =>
+  m.status === 'OUTSIDE' && m.expectedReturnDate < today() ? 'OVERDUE' : m.status;
+
+const badge: Record<TabletMovement['status'],string> = {
+  PENDING:'bg-amber-50 text-amber-700 border-amber-200',
+  APPROVED:'bg-blue-50 text-blue-700 border-blue-200',
+  REJECTED:'bg-rose-50 text-rose-700 border-rose-200',
+  OUTSIDE:'bg-violet-50 text-violet-700 border-violet-200',
+  RETURNED:'bg-emerald-50 text-emerald-700 border-emerald-200',
+  OVERDUE:'bg-red-50 text-red-700 border-red-200'
 };
-const today=()=>new Date().toISOString().slice(0,10);
-const effectiveStatus=(m:TabletMovement):TabletMovement['status']=>m.status==='OUTSIDE'&&m.expectedReturnDate<today()?'OVERDUE':m.status;
 
-export const TabletMovementManagement:React.FC<Props>=({movements,students,tablets,assignments,activeRole,onSave})=>{
-  const [search,setSearch]=useState(''); const [status,setStatus]=useState('ALL');
-  const [editing,setEditing]=useState<TabletMovement|null>(null); const [showForm,setShowForm]=useState(false); const [saving,setSaving]=useState(false);
+function buildCandidates(students:Student[], tablets:Tablet[], assignments:TabletAssignment[]):Candidate[] {
+  const result:Candidate[] = [];
+  const used = new Set<string>();
+  const add = (student:Student|undefined, tablet:Tablet|undefined, assignmentId:string) => {
+    if (!student || !tablet) return;
+    const key = student.id + '|' + tablet.id;
+    if (used.has(key)) return;
+    used.add(key);
+    result.push({
+      id:key, assignmentId, studentId:student.id, studentName:student.name, pinNumber:student.pinNumber,
+      tabletId:tablet.id, tabletName:tablet.tabletName || tablet.tabletNumber, tabletNumber:tablet.tabletNumber
+    });
+  };
 
-  // Support both the Assignment module and existing Student/Tablet links.
-  // This prevents the movement dropdown from becoming empty when older records
-  // were created before the Assignment collection was introduced.
-  const activeAssignments=useMemo(()=>assignments.filter(a=>String(a.status).toLowerCase()==='active'),[assignments]);
-  const list=useMemo(()=>movements.filter(m=>{const q=search.toLowerCase();const s=effectiveStatus(m);return (status==='ALL'||s===status)&&[m.studentName,m.tabletName,m.tabletNumber,m.movementType].join(' ').toLowerCase().includes(q)}),[movements,search,status]);
-  const save=async(next:TabletMovement[])=>{setSaving(true);try{await onSave(next);}finally{setSaving(false)}};
-  const changeStatus=async(id:string,next:TabletMovement['status'])=>{const item=movements.find(x=>x.id===id);if(!item)return;await save(movements.map(x=>x.id===id?{...x,status:next,updatedAt:new Date().toISOString()}:x));await logAuditAction('System User',activeRole,'TABLET_MOVEMENT_STATUS','Tablet Movement',`${item.tabletNumber}: ${item.status} → ${next}`);};
-  const remove=async(item:TabletMovement)=>{if(!confirm(`Delete movement record for ${item.studentName}?`))return;await save(movements.filter(x=>x.id!==item.id));await logAuditAction('System User',activeRole,'TABLET_MOVEMENT_DELETED','Tablet Movement',`Deleted movement ${item.id}`);};
-  const openAdd=()=>{setEditing(null);setShowForm(true)}; const openEdit=(m:TabletMovement)=>{setEditing(m);setShowForm(true)};
+  assignments.filter(a => String(a.status).toLowerCase() === 'active').forEach(a => {
+    add(students.find(s => s.id === a.studentId), tablets.find(t => t.id === a.tabletId), a.id);
+  });
 
-  return <div className="max-w-[1600px] mx-auto space-y-5">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><ClipboardList className="w-6 h-6 text-blue-600"/>Tablet Movement</h1><p className="mt-1 text-sm text-slate-500">Connected with active student tablet assignments.</p></div><button onClick={openAdd} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700"><Plus className="w-4 h-4"/>Add Movement</button></div>
+  students.forEach(student => {
+    const tablet =
+      tablets.find(t => t.id === student.assignedTabletId) ||
+      tablets.find(t => t.assignedToStudentId === student.id) ||
+      tablets.find(t => t.assignedToStudentName?.trim().toLowerCase() === student.name.trim().toLowerCase());
+    add(student, tablet, 'linked-' + student.id + '-' + (tablet?.id || ''));
+  });
 
-    {showForm&&<MovementForm students={students} tablets={tablets} assignments={activeAssignments} initial={editing} onCancel={()=>{setShowForm(false);setEditing(null)}} onSave={async(data)=>{const now=new Date().toISOString();const next=editing?movements.map(x=>x.id===editing.id?{...editing,...data,updatedAt:now}:x):[{...data,id:`movement-${Date.now()}`,status:'PENDING' as const,requestDate:today(),createdAt:now,updatedAt:now},...movements];await save(next);await logAuditAction('System User',activeRole,editing?'TABLET_MOVEMENT_UPDATED':'TABLET_MOVEMENT_CREATED','Tablet Movement',`${data.studentName} - ${data.tabletNumber}`);setShowForm(false);setEditing(null)}}/>}
+  return result;
+}
+
+export const TabletMovementManagement:React.FC<Props> = ({movements,students,tablets,assignments,activeRole,onSave}) => {
+  const [open,setOpen] = useState(false);
+  const [editing,setEditing] = useState<TabletMovement|null>(null);
+  const [search,setSearch] = useState('');
+  const [saving,setSaving] = useState(false);
+
+  const candidates = useMemo(() => buildCandidates(students,tablets,assignments), [students,tablets,assignments]);
+  const list = useMemo(() => movements.filter(m =>
+    [m.studentName,m.tabletName,m.tabletNumber,m.movementType,m.status].join(' ').toLowerCase().includes(search.toLowerCase())
+  ), [movements,search]);
+
+  const persist = async (next:TabletMovement[]) => { setSaving(true); try { await onSave(next); } finally { setSaving(false); } };
+
+  const updateStatus = async (m:TabletMovement, status:TabletMovement['status']) => {
+    await persist(movements.map(x => x.id === m.id ? {...x,status,updatedAt:new Date().toISOString()} : x));
+    await logAuditAction('System User',activeRole,'TABLET_MOVEMENT_STATUS','Tablet Movement',m.tabletNumber + ' → ' + status);
+  };
+
+  const remove = async (m:TabletMovement) => {
+    if (!window.confirm('Delete this tablet movement record?')) return;
+    await persist(movements.filter(x => x.id !== m.id));
+  };
+
+  return <div className="max-w-[1500px] mx-auto space-y-5">
+    <div className="flex items-center justify-between gap-3">
+      <div><h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><ClipboardList className="w-6 h-6 text-blue-600"/>Tablet Movement</h1><p className="text-sm text-slate-500 mt-1">Simple tablet outside movement tracking.</p></div>
+      <button onClick={()=>{setEditing(null);setOpen(true)}} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700"><Plus className="w-4 h-4"/>Add Movement</button>
+    </div>
+
+    {open && <MovementForm candidates={candidates} movements={movements} initial={editing} onCancel={()=>{setOpen(false);setEditing(null)}} onSave={async data=>{
+      const now=new Date().toISOString();
+      const next = editing
+        ? movements.map(x=>x.id===editing.id?{...editing,...data,updatedAt:now}:x)
+        : [{...data,id:'movement-'+Date.now(),requestDate:today(),status:'PENDING' as const,createdAt:now,updatedAt:now},...movements];
+      await persist(next);
+      await logAuditAction('System User',activeRole,editing?'TABLET_MOVEMENT_UPDATED':'TABLET_MOVEMENT_CREATED','Tablet Movement',data.studentName+' - '+data.tabletNumber);
+      setOpen(false);setEditing(null);
+    }}/>}
 
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student, tablet or movement type..." className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-blue-500"/></div><div className="relative"><Filter className="absolute left-3 top-3 h-4 w-4 text-slate-400"/><select value={status} onChange={e=>setStatus(e.target.value)} className="rounded-xl border border-slate-200 py-2.5 pl-9 pr-8 text-sm"><option value="ALL">All Status</option>{['PENDING','APPROVED','REJECTED','OUTSIDE','RETURNED','OVERDUE'].map(x=><option key={x}>{x}</option>)}</select></div></div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left"><thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500"><tr><th className="p-4">Student</th><th className="p-4">Tablet</th><th className="p-4">Type</th><th className="p-4">Start</th><th className="p-4">Return</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr></thead><tbody>{list.length===0?<tr><td colSpan={7} className="p-12 text-center text-sm text-slate-500">No movement records found.</td></tr>:list.map(m=>{const s=effectiveStatus(m);return <tr key={m.id} className="border-t border-slate-100 hover:bg-slate-50"><td className="p-4"><div className="font-bold text-slate-800">{m.studentName}</div><div className="text-xs text-slate-500">{m.pinNumber}</div></td><td className="p-4"><div className="font-semibold">{m.tabletName}</div><div className="text-xs text-slate-500">{m.tabletNumber}</div></td><td className="p-4 text-sm">{m.movementType}</td><td className="p-4 text-sm">{m.startDate}</td><td className="p-4 text-sm">{m.expectedReturnDate}</td><td className="p-4"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${statusClass[s]}`}>{s}</span></td><td className="p-4"><div className="flex justify-end gap-1"><button onClick={()=>openEdit(m)} title="Edit" className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"><Pencil className="w-4 h-4"/></button><button onClick={()=>remove(m)} title="Delete" className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4"/></button>{s==='PENDING'&&<><button onClick={()=>changeStatus(m.id,'APPROVED')} title="Approve" className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50"><CheckCircle2 className="w-4 h-4"/></button><button onClick={()=>changeStatus(m.id,'REJECTED')} title="Reject" className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><XCircle className="w-4 h-4"/></button></>}{s==='APPROVED'&&<button onClick={()=>changeStatus(m.id,'OUTSIDE')} title="Check Out" className="rounded-lg p-2 text-violet-600 hover:bg-violet-50"><LogOut className="w-4 h-4"/></button>}{(s==='OUTSIDE'||s==='OVERDUE')&&<button onClick={()=>changeStatus(m.id,'RETURNED')} title="Check In" className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50"><RotateCcw className="w-4 h-4"/></button>}</div></td></tr>})}</tbody></table></div>
-    </div>{saving&&<div className="fixed bottom-5 right-5 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white shadow-xl">Saving...</div>}
-  </div>
-}
+      <div className="p-4 border-b border-slate-100">
+        <div className="relative max-w-xl"><Search className="absolute left-3 top-3 w-4 h-4 text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student or tablet..." className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-blue-500"/></div>
+      </div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left">
+        <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="p-4">Student</th><th className="p-4">Tablet</th><th className="p-4">Type</th><th className="p-4">Dates</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr></thead>
+        <tbody>{list.length===0?<tr><td colSpan={6} className="p-12 text-center text-sm text-slate-500">No movement records found.</td></tr>:list.map(m=>{const s=currentStatus(m);return <tr key={m.id} className="border-t border-slate-100 hover:bg-slate-50"><td className="p-4 font-semibold">{m.studentName}</td><td className="p-4"><div className="font-semibold">{m.tabletName}</div><div className="text-xs text-slate-500">{m.tabletNumber}</div></td><td className="p-4 text-sm">{m.movementType}</td><td className="p-4 text-sm"><div>{m.startDate}</div><div className="text-xs text-slate-500">Return: {m.expectedReturnDate}</div></td><td className="p-4"><span className={'rounded-full border px-2.5 py-1 text-[11px] font-bold '+badge[s]}>{s}</span></td><td className="p-4"><div className="flex justify-end gap-1">
+          <button onClick={()=>{setEditing(m);setOpen(true)}} title="Edit" className="p-2 rounded-lg text-blue-600 hover:bg-blue-50"><Pencil className="w-4 h-4"/></button>
+          <button onClick={()=>remove(m)} title="Delete" className="p-2 rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4"/></button>
+          {s==='PENDING'&&<><button onClick={()=>updateStatus(m,'APPROVED')} title="Approve" className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50"><CheckCircle2 className="w-4 h-4"/></button><button onClick={()=>updateStatus(m,'REJECTED')} title="Reject" className="p-2 rounded-lg text-rose-600 hover:bg-rose-50"><XCircle className="w-4 h-4"/></button></>}
+          {s==='APPROVED'&&<button onClick={()=>updateStatus(m,'OUTSIDE')} title="Check Out" className="p-2 rounded-lg text-violet-600 hover:bg-violet-50"><LogOut className="w-4 h-4"/></button>}
+          {(s==='OUTSIDE'||s==='OVERDUE')&&<button onClick={()=>updateStatus(m,'RETURNED')} title="Return" className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50"><RotateCcw className="w-4 h-4"/></button>}
+        </div></td></tr>})}</tbody>
+      </table></div>
+    </div>
+    {saving&&<div className="fixed bottom-5 right-5 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white">Saving...</div>}
+  </div>;
+};
 
-const MovementForm:React.FC<{students:Student[];tablets:Tablet[];assignments:TabletAssignment[];initial:TabletMovement|null;onCancel:()=>void;onSave:(data:any)=>Promise<void>}> = ({students,tablets,assignments,initial,onCancel,onSave})=>{
-  // Primary source: active Assignment records.
-  // Fallback source: Student.assignedTabletId and Tablet.assignedToStudentId.
-  const selectableAssignments=useMemo(()=>{
-    const result: TabletAssignment[]=[...assignments];
-    const used=new Set(result.map(a=>a.studentId+'|'+a.tabletId));
+const MovementForm:React.FC<{candidates:Candidate[];movements:TabletMovement[];initial:TabletMovement|null;onCancel:()=>void;onSave:(data:any)=>Promise<void>}> = ({candidates,movements,initial,onCancel,onSave}) => {
+  const initialCandidate = initial ? candidates.find(c=>c.studentId===initial.studentId&&c.tabletId===initial.tabletId) : undefined;
+  const [candidateId,setCandidateId] = useState(initialCandidate?.id || '');
+  const [movementType,setMovementType] = useState(initial?.movementType || 'Vacation');
+  const [startDate,setStartDate] = useState(initial?.startDate || today());
+  const [returnDate,setReturnDate] = useState(initial?.expectedReturnDate || '');
+  const [destination,setDestination] = useState(initial?.destination || '');
+  const [reason,setReason] = useState(initial?.reason || '');
+  const [error,setError] = useState('');
+  const selected = candidates.find(c=>c.id===candidateId);
 
-    students.forEach(student=>{
-      const tablet=tablets.find(t=>t.id===student.assignedTabletId)
-        || tablets.find(t=>t.assignedToStudentId===student.id);
-      if(tablet && !used.has(student.id+'|'+tablet.id)){
-        result.push({
-          id:`linked-${student.id}-${tablet.id}`,
-          studentId:student.id,
-          studentName:student.name,
-          pinNumber:student.pinNumber,
-          standard:student.standard,
-          tabletId:tablet.id,
-          tabletNumber:tablet.tabletNumber,
-          tabletName:tablet.tabletName,
-          boxId:tablet.boxId,
-          boxNumber:tablet.boxNumber,
-          assignDate:'',
-          status:'Active',
-          assignedBy:'System'
-        });
-      }
-    });
+  const submit = async (e:React.FormEvent) => {
+    e.preventDefault(); setError('');
+    if(!selected){setError('Please select a student with an assigned tablet.');return;}
+    if(!returnDate || returnDate <= startDate){setError('Return date must be after start date.');return;}
+    const active = movements.some(m=>m.id!==initial?.id && m.tabletId===selected.tabletId && ['PENDING','APPROVED','OUTSIDE','OVERDUE'].includes(currentStatus(m)));
+    if(active){setError('This tablet already has an active movement record.');return;}
+    await onSave({assignmentId:selected.assignmentId,studentId:selected.studentId,studentName:selected.studentName,pinNumber:selected.pinNumber,tabletId:selected.tabletId,tabletName:selected.tabletName,tabletNumber:selected.tabletNumber,movementType,startDate,expectedReturnDate:returnDate,destination,reason,notes:''});
+  };
 
-    return result;
-  },[assignments,students,tablets]);
-  const [assignmentId,setAssignmentId]=useState(initial?.assignmentId||''); const [type,setType]=useState(initial?.movementType||'Vacation'); const [startDate,setStartDate]=useState(initial?.startDate||today()); const [expectedReturnDate,setExpectedReturnDate]=useState(initial?.expectedReturnDate||''); const [destination,setDestination]=useState(initial?.destination||''); const [reason,setReason]=useState(initial?.reason||''); const [notes,setNotes]=useState(initial?.notes||''); const [error,setError]=useState('');
-  const assignment=selectableAssignments.find(a=>a.id===assignmentId)||selectableAssignments.find(a=>a.studentId===initial?.studentId&&a.tabletId===initial?.tabletId);
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!assignment){setError('Please select an active student tablet assignment.');return}if(expectedReturnDate<=startDate){setError('Expected return date must be after start date.');return}setError('');await onSave({assignmentId:assignment.id,studentId:assignment.studentId,studentName:assignment.studentName,pinNumber:assignment.pinNumber,tabletId:assignment.tabletId,tabletName:assignment.tabletName,tabletNumber:assignment.tabletNumber,movementType:type,startDate,expectedReturnDate,destination,reason,notes});};
-  return <form onSubmit={submit} className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><div><h2 className="font-black text-slate-900">{initial?'Edit':'Add'} Tablet Movement</h2><p className="text-xs text-slate-500">Select the assigned student; tablet details are connected automatically.</p></div><button type="button" onClick={onCancel} className="rounded-lg p-2 hover:bg-slate-100"><X className="w-4 h-4"/></button></div>
-    <div className="mt-5 grid gap-4 md:grid-cols-2"><label className="text-xs font-bold text-slate-600">Student & Assigned Tablet<select required value={assignmentId} onChange={e=>setAssignmentId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Select active assignment</option>{selectableAssignments.map(a=><option key={a.id} value={a.id}>{a.studentName} — {a.tabletName} ({a.tabletNumber})</option>)}</select></label>{selectableAssignments.length===0&&<div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">No assigned tablet was found. Please assign a tablet to a student first from Tablet Assignment.</div>}<label className="text-xs font-bold text-slate-600">Movement Type<select value={type} onChange={e=>setType(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">{['Vacation','Take Home','Holiday','Educational Purpose','Other'].map(x=><option key={x}>{x}</option>)}</select></label>
-    {assignment&&<><div className="rounded-xl bg-slate-50 p-3 text-sm"><span className="text-xs text-slate-500">Student PIN</span><div className="font-bold">{assignment.pinNumber}</div></div><div className="rounded-xl bg-slate-50 p-3 text-sm"><span className="text-xs text-slate-500">Tablet</span><div className="font-bold">{assignment.tabletName} ({assignment.tabletNumber})</div></div></>}
-    <label className="text-xs font-bold text-slate-600">Start Date<input required type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label><label className="text-xs font-bold text-slate-600">Expected Return Date<input required type="date" value={expectedReturnDate} onChange={e=>setExpectedReturnDate(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label>
-    <label className="text-xs font-bold text-slate-600">Destination<input required value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Where will the tablet go?" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label><label className="text-xs font-bold text-slate-600">Reason<input required value={reason} onChange={e=>setReason(e.target.value)} placeholder="Reason for movement" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label><label className="text-xs font-bold text-slate-600 md:col-span-2">Notes (Optional)<textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label></div>
-    {error&&<div className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{error}</div>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold">Cancel</button><button className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-700">{initial?'Update Movement':'Save Movement'}</button></div>
-  </form>
-}
+  return <form onSubmit={submit} className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
+    <div className="flex items-center justify-between"><div><h2 className="font-black text-slate-900">{initial?'Edit':'Add'} Tablet Movement</h2><p className="text-xs text-slate-500">Only essential details are required.</p></div><button type="button" onClick={onCancel} className="p-2 rounded-lg hover:bg-slate-100"><X className="w-4 h-4"/></button></div>
+    <div className="mt-5 grid gap-4 md:grid-cols-2">
+      <label className="text-xs font-bold text-slate-600 md:col-span-2">Student & Tablet<select required value={candidateId} onChange={e=>setCandidateId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Select student and assigned tablet</option>{candidates.map(c=><option key={c.id} value={c.id}>{c.studentName} — {c.tabletNumber}</option>)}</select></label>
+      {selected&&<div className="md:col-span-2 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 text-sm"><b>{selected.studentName}</b><span className="mx-2 text-slate-400">•</span><b>{selected.tabletName}</b><span className="text-slate-500"> ({selected.tabletNumber})</span></div>}
+      {candidates.length===0&&<div className="md:col-span-2 rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">No student has a tablet assigned yet. Please assign a tablet first from Tablet Assignment.</div>}
+      <label className="text-xs font-bold text-slate-600">Movement Type<select value={movementType} onChange={e=>setMovementType(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">{['Vacation','Take Home','Holiday','Educational Purpose','Other'].map(x=><option key={x}>{x}</option>)}</select></label>
+      <label className="text-xs font-bold text-slate-600">Destination<input required value={destination} onChange={e=>setDestination(e.target.value)} placeholder="e.g. Student Home" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label>
+      <label className="text-xs font-bold text-slate-600">Start Date<input required type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label>
+      <label className="text-xs font-bold text-slate-600">Return Date<input required type="date" value={returnDate} onChange={e=>setReturnDate(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label>
+      <label className="text-xs font-bold text-slate-600 md:col-span-2">Reason<input required value={reason} onChange={e=>setReason(e.target.value)} placeholder="Reason for taking the tablet outside" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"/></label>
+    </div>
+    {error&&<div className="mt-4 rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-700">{error}</div>}
+    <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold">Cancel</button><button className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-700">{initial?'Update':'Save Movement'}</button></div>
+  </form>;
+};
