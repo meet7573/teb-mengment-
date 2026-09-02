@@ -62,10 +62,10 @@ function MainApp() {
   const handleRoleChange = (role: UserRole) => { setActiveRole(role); saveStoredRole(role); };
   const handleLoginSuccess = (user: AppUser) => { setCurrentUserState(user); setActiveRole(user.role); saveStoredRole(user.role); };
   const handleConfirmLogout = async () => { const token = localStorage.getItem('stm_admin_session_token'); if (token) await fetch('/api/admin/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined); localStorage.removeItem('stm_admin_session_token'); logoutUser(); setCurrentUserState(null); setIsLogoutOpen(false); };
-  const handleSaveStudents = async (updated: Student[]) => { try { await syncCollection('students', students, updated); } catch (e) { console.error('Failed to sync students', e); } };
-  const handleSaveTablets = async (updated: Tablet[]) => { try { await syncCollection('tablets', tablets, updated); } catch (e) { console.error('Failed to sync tablets', e); } };
-  const handleSaveBoxes = async (updated: TabletBox[]) => { try { await syncCollection('boxes', boxes, updated); } catch (e) { console.error('Failed to sync boxes', e); } };
-  const handleSaveAssignments = async (updated: TabletAssignment[]) => { try { await syncCollection('assignments', assignments, updated); } catch (e) { console.error('Failed to sync assignments', e); } };
+  const handleSaveStudents = async (updated: Student[]) => { await syncCollection('students', students, updated); };
+  const handleSaveTablets = async (updated: Tablet[]) => { await syncCollection('tablets', tablets, updated); };
+  const handleSaveBoxes = async (updated: TabletBox[]) => { await syncCollection('boxes', boxes, updated); };
+  const handleSaveAssignments = async (updated: TabletAssignment[]) => { await syncCollection('assignments', assignments, updated); };
   const handleSaveAttendance = async (updated: DailyAttendanceRecord[]) => { try { await syncCollection('attendance', attendanceRecords, updated); } catch (e) { console.error('Failed to sync attendance', e); } };
   const handleSaveMovements = async (updated: TabletMovement[]) => { try { await syncCollection('movements', movements, updated); } catch (e) { console.error('Failed to sync movements', e); throw e; } };
   const handleResetData = () => { clearAllDatabase(); setStudentsState([]); setTabletsState([]); setBoxesState([]); setAssignmentsState([]); setAttendanceRecordsState([]); setIsAuditLogsOpen(false); };
