@@ -178,6 +178,28 @@ export async function deleteStudent(student: Student, currentStudents?: Student[
   notifyListeners('students', normalizeCollectionData('students', remaining));
 }
 
+
+export async function deleteCollectionRecord(collectionName: string, id: string) {
+  const collection = String(collectionName ?? '').trim();
+  const recordId = String(id ?? '').trim();
+  if (!collection || !recordId) throw new Error('Collection name and record ID are required.');
+
+  const response = await fetch(
+    `/api/db/${encodeURIComponent(collection)}/${encodeURIComponent(recordId)}`,
+    { method: 'DELETE', headers: adminHeaders() }
+  );
+
+  if (response.status === 401) {
+    localStorage.removeItem('stm_admin_session_token');
+    notifyAdminSessionExpired();
+    throw new Error('Admin session expired. Please login again.');
+  }
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.error || `Delete failed: ${response.status}`);
+}
+
+
 export async function resetPersistentDatabase() {
   const response = await fetch('/api/db', { method: 'DELETE', headers: adminHeaders() });
   if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
