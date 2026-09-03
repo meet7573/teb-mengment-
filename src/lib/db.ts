@@ -160,7 +160,10 @@ export async function deleteStudent(student: Student, currentStudents?: Student[
     ? currentStudents
     : getLocalData('students');
   const remaining = source.filter((item) => String(item?.id ?? '') !== id);
+  // Immediately notify every mounted subscriber (App state included), so an
+  // old in-memory students array cannot render the deleted record again.
   setLocalData('students', normalizeCollectionData('students', remaining));
+  notifyListeners('students', normalizeCollectionData('students', remaining));
 }
 
 export async function resetPersistentDatabase() {
