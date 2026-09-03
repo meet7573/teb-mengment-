@@ -176,6 +176,22 @@ app.get('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey })
 app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try {
   // True UPSERT: older code only PATCHed rows, so newly created assignments
   // could disappear after the next refresh because no database row existed.
+  // A full collection PUT must also remove rows that are no longer present.
+  // Without this reconciliation, deleted students reappear on the next polling refresh.
+  if (collection === 'students') {
+    const incomingIds = new Set(items.map((item: any) => String(item?.id ?? '').trim()).filter(Boolean));
+    const existingStudents = await readCollectionServerSide('students');
+    for (const existing of existingStudents) {
+      const existingId = String(existing?.id ?? '').trim();
+      if (!existingId || incomingIds.has(existingId)) continue;
+      const deleteResponse = await supabaseRequest(
+        `app_data?collection=eq.students&id=eq.${encodeURIComponent(existingId)}`,
+        { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
+      );
+      if (!deleteResponse.ok) throw new Error(`Supabase student delete returned ${deleteResponse.status}`);
+    }
+  }
+
   for (const item of items) {
     const id = String(item?.id ?? '').trim();
     if (!id) continue;
