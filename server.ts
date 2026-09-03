@@ -184,6 +184,30 @@ app.delete('/api/student/:studentId', requireAdminSession({ supabaseUrl, supabas
   }
 });
 
+app.delete('/api/db/:collection/:id', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => {
+  const { collection, id } = req.params;
+  if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
+  const recordId = String(id ?? '').trim();
+  if (!recordId) return res.status(400).json({ error: 'Record ID is required' });
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+
+  try {
+    const response = await supabaseRequest(
+      `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(recordId)}`,
+      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
+    );
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.error(`Failed to delete ${collection}/${recordId}:`, response.status, body);
+      return res.status(500).json({ error: 'Failed to delete record' });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(`Delete failed for ${collection}/${recordId}:`, error);
+    return res.status(500).json({ error: 'Failed to delete record' });
+  }
+});
+
 app.get('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); try { return res.json(await readCollectionServerSide(collection)); } catch (error) { console.error(`Failed to read ${collection}:`, error); return res.status(500).json({ error: 'Failed to read data' }); } });
 app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try {
   // True UPSERT: older code only PATCHed rows, so newly created assignments
