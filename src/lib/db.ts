@@ -32,21 +32,10 @@ function formatDuration(minutes: unknown): string | undefined {
 
 function normalizeAttendanceRows(rows: any[]): DailyAttendanceRecord[] {
   if (!Array.isArray(rows) || rows.length === 0) return [];
-
-  // Keep legacy DailyAttendanceRecord rows working exactly as before.
   const legacyRows = rows.filter((row) => Array.isArray(row?.details));
   const sessionRows = rows.filter((row) => !Array.isArray(row?.details) && (row?.studentId || row?.sessionId));
-  if (sessionRows.length === 0) {
-    return legacyRows.map((record) => ({
-      ...record,
-      details: Array.isArray(record?.details) ? record.details.filter(Boolean) : [],
-    }));
-  }
+  if (sessionRows.length === 0) return legacyRows.map((record) => ({ ...record, details: Array.isArray(record?.details) ? record.details.filter(Boolean) : [] }));
 
-  // Student app attendance is stored as one row per session. The Attendance
-  // Register expects one DailyAttendanceRecord containing a details[] array.
-  // Convert/group the server session rows here so the admin UI immediately sees
-  // the same IN/OUT state saved by the student app.
   const byDate = new Map<string, any[]>();
   for (const row of sessionRows) {
     const date = String(row?.date || row?.startedAt || row?.returnedAt || '').slice(0, 10);
@@ -58,7 +47,6 @@ function normalizeAttendanceRows(rows: any[]): DailyAttendanceRecord[] {
 
   const result: DailyAttendanceRecord[] = [];
   for (const [date, dateRows] of byDate.entries()) {
-    // If a student has multiple sessions on the same day, show the latest one.
     const latestByStudent = new Map<string, any>();
     for (const row of dateRows) {
       const studentId = String(row?.studentId ?? row?.studentID ?? '').trim();
@@ -72,8 +60,6 @@ function normalizeAttendanceRows(rows: any[]): DailyAttendanceRecord[] {
     const details: AttendanceDetail[] = Array.from(latestByStudent.values()).map((row: any) => {
       const rawStatus = String(row?.status ?? '').trim().toUpperCase();
       const status: AttendanceStatus = rawStatus === 'OUT' || rawStatus === 'CHECKED OUT' ? 'Checked Out' : 'Checked In';
-      const checkInTime = formatAttendanceTime(row?.startedAt ?? row?.checkInTime);
-      const checkOutTime = formatAttendanceTime(row?.returnedAt ?? row?.checkOutTime);
       return {
         studentId: String(row?.studentId ?? row?.studentID ?? ''),
         studentName: String(row?.studentName ?? 'Student'),
@@ -82,47 +68,27 @@ function normalizeAttendanceRows(rows: any[]): DailyAttendanceRecord[] {
         isCoachingStudent: Boolean(row?.isCoachingStudent),
         assignedTabletNumber: String(row?.tabletId ?? row?.assignedTabletNumber ?? '').trim() || undefined,
         status,
-        checkInTime,
-        checkOutTime,
+        checkInTime: formatAttendanceTime(row?.startedAt ?? row?.checkInTime),
+        checkOutTime: formatAttendanceTime(row?.returnedAt ?? row?.checkOutTime),
         totalDuration: formatDuration(row?.durationMinutes),
         markedAt: formatAttendanceTime(row?.returnedAt ?? row?.startedAt) || new Date().toLocaleTimeString(),
       } as AttendanceDetail;
     });
 
-    const latestTimestamp = dateRows
-      .map((row: any) => String(row?.returnedAt || row?.startedAt || ''))
-      .filter(Boolean)
-      .sort()
-      .pop() || new Date().toISOString();
-
-    result.push({
-      id: `att-${date}`,
-      date,
-      isLocked: false,
-      submittedBy: 'Student App',
-      submittedAt: formatAttendanceTime(latestTimestamp) || latestTimestamp,
-      details,
-    });
+    const latestTimestamp = dateRows.map((row: any) => String(row?.returnedAt || row?.startedAt || '')).filter(Boolean).sort().pop() || new Date().toISOString();
+    result.push({ id: `att-${date}`, date, isLocked: false, submittedBy: 'Student App', submittedAt: formatAttendanceTime(latestTimestamp) || latestTimestamp, details });
   }
 
-  return [...legacyRows.map((record) => ({
-    ...record,
-    details: Array.isArray(record?.details) ? record.details.filter(Boolean) : [],
-  })), ...result].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return [...legacyRows.map((record) => ({ ...record, details: Array.isArray(record?.details) ? record.details.filter(Boolean) : [] })), ...result].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 function normalizeCollectionData(collectionName: string, data: any[]): any[] {
   if (!Array.isArray(data)) return [];
   const visibleData = collectionName === 'students' ? data.filter((student) => student?.isDeleted !== true && student?.deleted !== true) : data;
-  if (collectionName === 'students') {
-    return visibleData.map((student) => {
-      const rawStatus = String(student?.status ?? '').trim();
-      if (rawStatus.toLowerCase() === 'approved') {
-        return { ...student, status: 'Active', approvalStatus: 'Approved' };
-      }
-      return student;
-    });
-  }
+  if (collectionName === 'students') return visibleData.map((student) => {
+    const rawStatus = String(student?.status ?? '').trim();
+    return rawStatus.toLowerCase() === 'approved' ? { ...student, status: 'Active', approvalStatus: 'Approved' } : student;
+  });
   if (collectionName === 'tablets') return visibleData.map((tablet) => { const rawStatus = String(tablet?.status ?? '').trim().toLowerCase(); const status = rawStatus === 'assigned' ? 'Assigned' : rawStatus === 'maintenance' ? 'Maintenance' : 'Available'; return { ...tablet, status }; });
   if (collectionName === 'assignments') return visibleData.map((assignment) => ({ ...assignment, status: String(assignment?.status ?? '').trim().toLowerCase() === 'returned' ? 'Returned' : 'Active' }));
   if (collectionName === 'attendance') return normalizeAttendanceRows(visibleData);
@@ -131,11 +97,7 @@ function normalizeCollectionData(collectionName: string, data: any[]): any[] {
 
 async function fetchCollection(collectionName: string): Promise<any[]> {
   const response = await fetch(`/api/db/${collectionName}?_=${Date.now()}`, { headers: { ...adminHeaders(), 'Cache-Control': 'no-cache' }, cache: 'no-store' });
-  if (response.status === 401) {
-    localStorage.removeItem('stm_admin_session_token');
-    notifyAdminSessionExpired();
-    throw new Error('Admin session expired. Please login again.');
-  }
+  if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   if (!response.ok) throw new Error(`Database read failed: ${response.status}`);
   return normalizeCollectionData(collectionName, await response.json());
 }
@@ -143,18 +105,13 @@ async function fetchCollection(collectionName: string): Promise<any[]> {
 export function subscribeToCollection<T>(collectionName: string, callback: (data: T[]) => void) {
   if (!listeners[collectionName]) listeners[collectionName] = new Set();
   listeners[collectionName].add(callback);
-  let stopped = false;
-  let refreshing = false;
+  let stopped = false; let refreshing = false;
   const refresh = async () => {
     if (stopped || refreshing || document.visibilityState === 'hidden') return;
     refreshing = true;
-    try {
-      const data = await fetchCollection(collectionName);
-      if (!stopped) setLocalData(collectionName, data);
-    } catch (error) {
-      console.error(`Failed to refresh ${collectionName} from the database`, error);
-      if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]);
-    } finally { refreshing = false; }
+    try { const data = await fetchCollection(collectionName); if (!stopped) setLocalData(collectionName, data); }
+    catch (error) { console.error(`Failed to refresh ${collectionName} from the database`, error); if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]); }
+    finally { refreshing = false; }
   };
   void refresh();
   const intervalId = window.setInterval(refresh, REFRESH_INTERVAL_MS);
@@ -169,48 +126,41 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
   if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
   if (collectionName === 'students') {
-    // Student data is already successfully persisted above. Credential/photo
-    // provisioning is an optional follow-up and must never make a successful
-    // tablet assignment look like a database failure.
     try {
       const role = localStorage.getItem('stm_active_role_v3') || '';
-      const credentialsResponse = await fetch('/api/photos/student/credentials', {
-        method: 'POST',
-        headers: adminHeaders({ 'x-admin-role': role }),
-        body: JSON.stringify({ studentIds: normalizedUpdated.map((item) => item.id) })
-      });
-      if (credentialsResponse.status === 401) {
-        localStorage.removeItem('stm_admin_session_token');
-        notifyAdminSessionExpired();
-        throw new Error('Admin session expired. Please login again.');
-      }
+      const credentialsResponse = await fetch('/api/photos/student/credentials', { method: 'POST', headers: adminHeaders({ 'x-admin-role': role }), body: JSON.stringify({ studentIds: normalizedUpdated.map((item) => item.id) }) });
+      if (credentialsResponse.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
       if (credentialsResponse.ok) {
         const data = await credentialsResponse.json();
-        setLocalData(collectionName, Array.isArray(data.students)
-          ? normalizeCollectionData(collectionName, data.students)
-          : normalizedUpdated);
+        setLocalData(collectionName, Array.isArray(data.students) ? normalizeCollectionData(collectionName, data.students) : normalizedUpdated);
         return;
       }
       console.warn(`Student credential provisioning skipped: ${credentialsResponse.status}`);
     } catch (error) {
-      // Only the already-saved student data matters for this operation.
-      // Keep the UI consistent with the database and do not fail assignments.
       if (String(error).includes('Admin session expired')) throw error;
       console.warn('Student credential provisioning skipped:', error);
     }
-    setLocalData(collectionName, normalizedUpdated);
-    return;
   }
   setLocalData(collectionName, normalizedUpdated);
 }
 
-export async function deleteStudent(student: Student) {
-  const id = String(student?.id ?? '').trim(); if (!id) throw new Error('Student ID is required.');
-  const deletedStudent = { ...student, isDeleted: true, isActive: false, status: 'Inactive', deletedAt: new Date().toISOString() };
-  const response = await fetch('/api/db/students', { method: 'PUT', headers: adminHeaders(), body: JSON.stringify([deletedStudent]) });
+/**
+ * Delete one student using the same full-collection PUT contract as all other
+ * student saves. The old implementation sent only the deleted row, which could
+ * overwrite the students collection and race with a second save.
+ */
+export async function deleteStudent(student: Student, currentStudents?: Student[]) {
+  const id = String(student?.id ?? '').trim();
+  if (!id) throw new Error('Student ID is required.');
+
+  const source = Array.isArray(currentStudents) && currentStudents.length ? currentStudents : getLocalData('students');
+  const remaining = source.filter((item) => String(item?.id ?? '') !== id);
+  const response = await fetch('/api/db/students', { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(remaining) });
+
   if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-  if (!response.ok) { if (!import.meta.env.PROD) return; throw new Error(`Student delete failed: ${response.status}`); }
-  const remaining = normalizeCollectionData('students', getLocalData('students').filter((item) => String(item?.id ?? '') !== id)); setLocalData('students', remaining);
+  if (!response.ok) { if (!import.meta.env.PROD) { setLocalData('students', remaining); return; } throw new Error(`Student delete failed: ${response.status}`); }
+
+  setLocalData('students', normalizeCollectionData('students', remaining));
 }
 
 export async function resetPersistentDatabase() {
