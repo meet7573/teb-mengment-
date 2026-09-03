@@ -165,6 +165,18 @@ app.delete('/api/student/:studentId', requireAdminSession({ supabaseUrl, supabas
       if (!response.ok) throw new Error(`Assignment cleanup returned ${response.status}`);
     }
 
+    const tombstoneId = randomUUID();
+    const tombstoneResponse = await supabaseRequest('app_data', {
+      method: 'POST',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        collection: 'auditLogs',
+        id: tombstoneId,
+        data: { id: tombstoneId, action: 'STUDENT_DELETED', studentId, timestamp: now }
+      })
+    });
+    if (!tombstoneResponse.ok) throw new Error(`Student delete audit returned ${tombstoneResponse.status}`);
+
     return res.json({ ok: true, message: 'Student deleted successfully.' });
   } catch (error) {
     console.error('Student delete failed:', error);
@@ -179,6 +191,18 @@ app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey })
   // A full collection PUT must also remove rows that are no longer present.
   // Without this reconciliation, deleted students reappear on the next polling refresh.
   if (collection === 'students') {
+    const auditLogs = await readCollectionServerSide('auditLogs');
+    const deletedStudentIds = new Set(
+      auditLogs
+        .filter((log: any) => String(log?.action ?? '') === 'STUDENT_DELETED')
+        .map((log: any) => String(log?.studentId ?? '').trim())
+        .filter(Boolean)
+    );
+    // Ignore stale browser saves that try to resurrect a student already deleted.
+    const safeItems = items.filter((item: any) => !deletedStudentIds.has(String(item?.id ?? '').trim()));
+    items.length = 0;
+    items.push(...safeItems);
+
     const incomingIds = new Set(items.map((item: any) => String(item?.id ?? '').trim()).filter(Boolean));
     const existingStudents = await readCollectionServerSide('students');
     for (const existing of existingStudents) {
