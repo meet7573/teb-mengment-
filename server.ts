@@ -122,6 +122,56 @@ app.post('/api/student/return', async (req, res) => { if (!databaseConfigured())
 
 app.get('/api/admin/tablet-usage', requireAdminSession({ supabaseUrl, supabaseKey }), async (_req, res) => { if (!databaseConfigured()) return res.status(503).json({ error: 'Service unavailable' }); try { const sessions = await readCollectionServerSide('studentSessions'); const normalized = sessions.filter((item) => item && item.id && item.startedAt).map((item) => ({ id: String(item.id), studentId: String(item.studentId ?? ''), studentName: String(item.studentName ?? 'Student'), tabletId: String(item.tabletId ?? ''), startedAt: String(item.startedAt), returnedAt: item.returnedAt ? String(item.returnedAt) : null, durationMinutes: item.durationMinutes == null ? null : Number(item.durationMinutes), status: item.status === 'active' ? 'active' : 'returned' })).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()); return res.json({ sessions: normalized }); } catch (error) { console.error('Tablet usage read failed:', error); return res.status(500).json({ error: 'Could not load tablet usage.' }); } });
 
+app.delete('/api/student/:studentId', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => {
+  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+  const studentId = String(req.params.studentId ?? '').trim();
+  if (!studentId) return res.status(400).json({ error: 'Student ID is required' });
+
+  try {
+    const students = await readCollectionServerSide('students');
+    const student = students.find((item) => valueMatches(item?.id ?? item?.studentId ?? item?.studentID, studentId));
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+
+    // Soft delete keeps historical tablet movements and attendance intact while
+    // immediately removing the student from all active application screens.
+    const now = new Date().toISOString();
+    const deletedStudent = {
+      ...student,
+      isDeleted: true,
+      isActive: false,
+      status: 'Inactive',
+      assignedTabletId: null,
+      assignedTabletNumber: null,
+      deletedAt: now,
+      updatedAt: now
+    };
+
+    const studentResponse = await supabaseRequest(
+      `app_data?collection=eq.students&id=eq.${encodeURIComponent(String(student.id ?? studentId))}`,
+      { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: deletedStudent, updated_at: now }) }
+    );
+    if (!studentResponse.ok) throw new Error(`Student delete returned ${studentResponse.status}`);
+
+    // Close active assignments for this student so the tablet is not left assigned.
+    const assignments = await readCollectionServerSide('assignments');
+    for (const assignment of assignments.filter((item) => valueMatches(item?.studentId, studentId) && String(item?.status ?? '').toLowerCase() !== 'returned')) {
+      const assignmentId = String(assignment?.id ?? '').trim();
+      if (!assignmentId) continue;
+      const updatedAssignment = { ...assignment, status: 'Returned', returnedAt: now, updatedAt: now };
+      const response = await supabaseRequest(
+        `app_data?collection=eq.assignments&id=eq.${encodeURIComponent(assignmentId)}`,
+        { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: updatedAssignment, updated_at: now }) }
+      );
+      if (!response.ok) throw new Error(`Assignment cleanup returned ${response.status}`);
+    }
+
+    return res.json({ ok: true, message: 'Student deleted successfully.' });
+  } catch (error) {
+    console.error('Student delete failed:', error);
+    return res.status(500).json({ error: 'Student could not be deleted.' });
+  }
+});
+
 app.get('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); try { return res.json(await readCollectionServerSide(collection)); } catch (error) { console.error(`Failed to read ${collection}:`, error); return res.status(500).json({ error: 'Failed to read data' }); } });
 app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try {
   // True UPSERT: older code only PATCHed rows, so newly created assignments
