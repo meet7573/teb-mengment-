@@ -108,6 +108,7 @@ export const TabletMovementManagement:React.FC<Props> = ({movements,students,tab
   const [editing,setEditing] = useState<TabletMovement|null>(null);
   const [search,setSearch] = useState('');
   const [saving,setSaving] = useState(false);
+  const [deleteTarget,setDeleteTarget] = useState<TabletMovement|null>(null);
 
   const candidates = useMemo(() => buildCandidates(students,tablets,assignments), [students,tablets,assignments]);
   const list = useMemo(() => movements.filter(m =>
@@ -121,15 +122,15 @@ export const TabletMovementManagement:React.FC<Props> = ({movements,students,tab
     await logAuditAction('System User',activeRole,'TABLET_MOVEMENT_STATUS','Tablet Movement',m.tabletNumber + ' → ' + status);
   };
 
-  const remove = async (m:TabletMovement) => {
-    if (!window.confirm('Delete this tablet movement record?')) return;
+  const remove = async () => {
+    if (!deleteTarget) return;
+    const m = deleteTarget;
     setSaving(true);
     try {
-      // A collection PUT only updates/upserts existing rows. Delete the exact
-      // database row first so it cannot return after a refresh.
       await deleteCollectionRecord('movements', m.id);
       await onSave(movements.filter(x => x.id !== m.id));
       await logAuditAction('System User', activeRole, 'TABLET_MOVEMENT_DELETED', 'Tablet Movement', m.tabletNumber);
+      setDeleteTarget(null);
     } finally {
       setSaving(false);
     }
@@ -159,7 +160,7 @@ export const TabletMovementManagement:React.FC<Props> = ({movements,students,tab
         <thead className="bg-slate-50 text-[11px] uppercase text-slate-500"><tr><th className="p-4">Student</th><th className="p-4">Tablet</th><th className="p-4">Type</th><th className="p-4">Dates</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr></thead>
         <tbody>{list.length===0?<tr><td colSpan={6} className="p-12 text-center text-sm text-slate-500">No movement records found.</td></tr>:list.map(m=>{const s=currentStatus(m);return <tr key={m.id} className="border-t border-slate-100 hover:bg-slate-50"><td className="p-4 font-semibold">{m.studentName}</td><td className="p-4"><div className="font-semibold">{m.tabletName}</div><div className="text-xs text-slate-500">{m.tabletNumber}</div></td><td className="p-4 text-sm">{m.movementType}</td><td className="p-4 text-sm"><div>{m.startDate}</div><div className="text-xs text-slate-500">Return: {m.expectedReturnDate}</div></td><td className="p-4"><span className={'rounded-full border px-2.5 py-1 text-[11px] font-bold '+badge[s]}>{s}</span></td><td className="p-4"><div className="flex justify-end gap-1">
           <button onClick={()=>{setEditing(m);setOpen(true)}} title="Edit" className="p-2 rounded-lg text-blue-600 hover:bg-blue-50"><Pencil className="w-4 h-4"/></button>
-          <button onClick={()=>remove(m)} title="Delete" className="p-2 rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4"/></button>
+          <button onClick={()=>setDeleteTarget(m)} title="Delete" className="p-2 rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4"/></button>
           {s==='PENDING'&&<><button onClick={()=>updateStatus(m,'APPROVED')} title="Approve" className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50"><CheckCircle2 className="w-4 h-4"/></button><button onClick={()=>updateStatus(m,'REJECTED')} title="Reject" className="p-2 rounded-lg text-rose-600 hover:bg-rose-50"><XCircle className="w-4 h-4"/></button></>}
           {s==='APPROVED'&&<button onClick={()=>updateStatus(m,'OUTSIDE')} title="Check Out" className="p-2 rounded-lg text-violet-600 hover:bg-violet-50"><LogOut className="w-4 h-4"/></button>}
           {(s==='OUTSIDE'||s==='OVERDUE')&&<button onClick={()=>updateStatus(m,'RETURNED')} title="Return" className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50"><RotateCcw className="w-4 h-4"/></button>}
@@ -167,6 +168,26 @@ export const TabletMovementManagement:React.FC<Props> = ({movements,students,tab
       </table></div>
     </div>
     {saving&&<div className="fixed bottom-5 right-5 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white">Saving...</div>}
+    {deleteTarget && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600"><Trash2 className="h-6 w-6"/></div>
+          <div className="flex-1">
+            <h3 className="text-lg font-black text-slate-900">Delete Tablet Movement?</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Are you sure you want to delete this tablet movement record? This action cannot be undone.</p>
+            <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <b>{deleteTarget.tabletName}</b> ({deleteTarget.tabletNumber})
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" disabled={saving} onClick={()=>setDeleteTarget(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+          <button type="button" disabled={saving} onClick={remove} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50">{saving ? 'Deleting...' : 'Yes, Delete'}</button>
+        </div>
+      </div>
+    </div>}
+
+
   </div>;
 };
 
