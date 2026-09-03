@@ -153,13 +153,28 @@ export async function deleteStudent(student: Student, currentStudents?: Student[
   const id = String(student?.id ?? '').trim();
   if (!id) throw new Error('Student ID is required.');
 
-  const source = Array.isArray(currentStudents) && currentStudents.length ? currentStudents : getLocalData('students');
+  // Use the dedicated server delete API. A collection PUT is an UPSERT and
+  // cannot remove rows that are simply omitted from the submitted array.
+  const response = await fetch(`/api/student/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: adminHeaders()
+  });
+
+  if (response.status === 401) {
+    localStorage.removeItem('stm_admin_session_token');
+    notifyAdminSessionExpired();
+    throw new Error('Admin session expired. Please login again.');
+  }
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result?.error || `Student delete failed: ${response.status}`);
+  }
+
+  const source = Array.isArray(currentStudents) && currentStudents.length
+    ? currentStudents
+    : getLocalData('students');
   const remaining = source.filter((item) => String(item?.id ?? '') !== id);
-  const response = await fetch('/api/db/students', { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(remaining) });
-
-  if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-  if (!response.ok) { if (!import.meta.env.PROD) { setLocalData('students', remaining); return; } throw new Error(`Student delete failed: ${response.status}`); }
-
   setLocalData('students', normalizeCollectionData('students', remaining));
 }
 
