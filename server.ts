@@ -148,7 +148,7 @@ app.delete('/api/student/:studentId', requireAdminSession({ supabaseUrl, supabas
 
     const studentResponse = await supabaseRequest(
       `app_data?collection=eq.students&id=eq.${encodeURIComponent(String(student.id ?? studentId))}`,
-      { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: deletedStudent, updated_at: now }) }
+      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
     );
     if (!studentResponse.ok) throw new Error(`Student delete returned ${studentResponse.status}`);
 
