@@ -2,7 +2,6 @@ import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, At
 
 const listeners: Record<string, Set<(data: any[]) => void>> = {};
 const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions'];
-const REFRESH_INTERVAL_MS = 3000;
 
 function adminHeaders(extra: Record<string, string> = {}) {
   const token = localStorage.getItem('stm_admin_session_token') || '';
@@ -113,11 +112,24 @@ export function subscribeToCollection<T>(collectionName: string, callback: (data
     catch (error) { console.error(`Failed to refresh ${collectionName} from the database`, error); if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]); }
     finally { refreshing = false; }
   };
+  // Load once when the component subscribes. Do NOT poll every few seconds:
+  // polling every collection was creating continuous network requests and could
+  // also overwrite newer state with stale data.
   void refresh();
-  const intervalId = window.setInterval(refresh, REFRESH_INTERVAL_MS);
-  const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
+
+  // Refresh only when the user returns to the application.
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') void refresh();
+  };
+  window.addEventListener('focus', refresh);
   document.addEventListener('visibilitychange', onVisibilityChange);
-  return () => { stopped = true; window.clearInterval(intervalId); document.removeEventListener('visibilitychange', onVisibilityChange); listeners[collectionName]?.delete(callback); };
+
+  return () => {
+    stopped = true;
+    window.removeEventListener('focus', refresh);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    listeners[collectionName]?.delete(callback);
+  };
 }
 
 export async function syncCollection<T extends { id: string }>(collectionName: string, _current: T[], updated: T[]) {
