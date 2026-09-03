@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ClipboardList, Plus, Search, Pencil, Trash2, CheckCircle2, XCircle, LogOut, RotateCcw, X } from 'lucide-react';
 import { Student, Tablet, TabletAssignment, UserRole, TabletMovement } from '../../types';
 import { logAuditAction } from '../../utils/storage';
+import { deleteCollectionRecord } from '../../lib/db';
 
 interface Props {
   movements: TabletMovement[];
@@ -122,7 +123,16 @@ export const TabletMovementManagement:React.FC<Props> = ({movements,students,tab
 
   const remove = async (m:TabletMovement) => {
     if (!window.confirm('Delete this tablet movement record?')) return;
-    await persist(movements.filter(x => x.id !== m.id));
+    setSaving(true);
+    try {
+      // A collection PUT only updates/upserts existing rows. Delete the exact
+      // database row first so it cannot return after a refresh.
+      await deleteCollectionRecord('movements', m.id);
+      await onSave(movements.filter(x => x.id !== m.id));
+      await logAuditAction('System User', activeRole, 'TABLET_MOVEMENT_DELETED', 'Tablet Movement', m.tabletNumber);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return <div className="max-w-[1500px] mx-auto space-y-5">
