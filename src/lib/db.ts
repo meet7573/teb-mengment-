@@ -125,22 +125,7 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
   const response = await fetch(`/api/db/${collectionName}`, { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(normalizedUpdated) });
   if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
-  if (collectionName === 'students') {
-    try {
-      const role = localStorage.getItem('stm_active_role_v3') || '';
-      const credentialsResponse = await fetch('/api/photos/student/credentials', { method: 'POST', headers: adminHeaders({ 'x-admin-role': role }), body: JSON.stringify({ studentIds: normalizedUpdated.map((item) => item.id) }) });
-      if (credentialsResponse.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-      if (credentialsResponse.ok) {
-        const data = await credentialsResponse.json();
-        setLocalData(collectionName, Array.isArray(data.students) ? normalizeCollectionData(collectionName, data.students) : normalizedUpdated);
-        return;
-      }
-      console.warn(`Student credential provisioning skipped: ${credentialsResponse.status}`);
-    } catch (error) {
-      if (String(error).includes('Admin session expired')) throw error;
-      console.warn('Student credential provisioning skipped:', error);
-    }
-  }
+
   setLocalData(collectionName, normalizedUpdated);
 }
 
