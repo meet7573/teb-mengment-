@@ -1,5 +1,4 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
-import { PhotoSidebar } from './components/PhotoSidebar';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { DashboardView } from './components/Dashboard/DashboardView';
 import { CheckoutRequestsPanel } from './components/Dashboard/CheckoutRequestsPanel';
@@ -8,7 +7,6 @@ import { TabletManagement } from './components/Tablets/TabletManagement';
 import { TabletBoxManagement } from './components/TabletBoxes/TabletBoxManagement';
 import { TabletAssignmentView } from './components/Assignments/TabletAssignment';
 import { SettingsView } from './components/Settings/SettingsView';
-import { PhotoManagement } from './components/PhotoManagement/PhotoManagement';
 import { TabletUsage } from './components/TabletUsage/TabletUsage';
 import { TabletMovementManagement } from './components/TabletMovement/TabletMovementManagement';
 import { StudentDownload } from './components/StudentDownload/StudentDownload';
@@ -76,7 +74,7 @@ function MainApp() {
   if (!currentUser) return <SuperAdminLogin isOpen={true} onLoginSuccess={handleLoginSuccess} />;
   const pageFallback = <div className="flex-1 min-h-[70vh] flex items-center justify-center text-sm font-semibold text-slate-500">Loading page...</div>;
 
-  return <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex"><PhotoSidebar activeTab={activeTab} setActiveTab={setActiveTab} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} currentUser={currentUser} activeRole={activeRole} setActiveRole={handleRoleChange} onOpenSearch={() => setIsSearchOpen(true)} onOpenAuditLogs={() => setIsAuditLogsOpen(true)} onOpenUsersModal={() => setIsUsersModalOpen(true)} onOpenThemeModal={() => setIsThemeModalOpen(true)} onOpenLogout={() => setIsLogoutOpen(true)} /><main className={`flex-1 transition-all duration-300 min-w-0 ${sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'} ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
+  return <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex"><Sidebar activeTab={activeTab} setActiveTab={setActiveTab} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} currentUser={currentUser} activeRole={activeRole} setActiveRole={handleRoleChange} onOpenSearch={() => setIsSearchOpen(true)} onOpenAuditLogs={() => setIsAuditLogsOpen(true)} onOpenUsersModal={() => setIsUsersModalOpen(true)} onOpenThemeModal={() => setIsThemeModalOpen(true)} onOpenLogout={() => setIsLogoutOpen(true)} /><main className={`flex-1 transition-all duration-300 min-w-0 ${sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'} ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
     {activeTab === 'dashboard' && <><DashboardView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} onNavigate={(tab) => setActiveTab(tab)} /><CheckoutRequestsPanel /></>}
     {activeTab === 'attendance' && <PageErrorBoundary pageName="Attendance"><Suspense fallback={pageFallback}><DigitalAttendance students={students} attendanceRecords={attendanceRecords} onSaveAttendanceRecords={handleSaveAttendance} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} /></Suspense></PageErrorBoundary>}
     {activeTab === 'students' && <StudentManagementSafe students={students} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssignTablet={handleQuickAssignFromStudent} />}
@@ -84,7 +82,6 @@ function MainApp() {
     {activeTab === 'tablets' && <TabletManagement tablets={tablets} students={students} boxes={boxes} onSaveTablets={handleSaveTablets} onSaveBoxes={handleSaveBoxes} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssign={handleQuickAssignFromTablet} />}
     {activeTab === 'assignments' && <TabletAssignmentView assignments={assignments} students={students} tablets={tablets} onSaveAssignments={handleSaveAssignments} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} preselectedStudentForAssign={preselectedStudent} preselectedTabletForAssign={preselectedTablet} onClearPreselections={() => { setPreselectedStudent(null); setPreselectedTablet(null); }} />}
     {activeTab === 'reports' && <PageErrorBoundary pageName="Reports"><Suspense fallback={pageFallback}><ReportsView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} activeRole={activeRole} /></Suspense></PageErrorBoundary>}
-    {activeTab === 'photo-management' && <PhotoManagement students={students} tablets={tablets} onSaveStudents={handleSaveStudents} onSaveTablets={handleSaveTablets} activeRole={activeRole} />}
     {activeTab === 'tablet-usage' && <TabletUsage />}
     {activeTab === 'tablet-movement' && <PageErrorBoundary pageName="Tablet Movement"><TabletMovementManagement movements={movements} students={students} tablets={tablets} assignments={assignments} activeRole={activeRole} onSave={handleSaveMovements} /></PageErrorBoundary>}
     {activeTab === 'student-download' && <StudentDownload />}
