@@ -75,13 +75,20 @@ function MainApp() {
 
   // Always use the latest student master data for attendance display.
   // Existing attendance records may contain stale/missing PIN or class values.
+  // Match by ID first and by student name as a safe fallback for legacy attendance rows.
   const attendanceRecordsWithStudentDetails = attendanceRecords.map((record) => ({
     ...record,
     details: record.details.map((detail) => {
-      const student = students.find((s) => s.id === detail.studentId);
+      const detailId = String(detail.studentId ?? '').trim();
+      const detailName = String(detail.studentName ?? '').trim().toLowerCase();
+      const student = students.find((s) =>
+        String(s.id ?? '').trim() === detailId ||
+        (detailName && String(s.name ?? '').trim().toLowerCase() === detailName)
+      );
       if (!student) return detail;
       return {
         ...detail,
+        studentId: student.id,
         studentName: student.name,
         pinNumber: student.pinNumber,
         standard: student.standard,
