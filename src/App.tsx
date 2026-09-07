@@ -72,12 +72,31 @@ function MainApp() {
   const [preselectedTablet, setPreselectedTablet] = useState<Tablet | null>(null);
   const handleQuickAssignFromStudent = (student: Student) => { setPreselectedStudent(student); setPreselectedTablet(null); setActiveTab('assignments'); };
   const handleQuickAssignFromTablet = (tablet: Tablet) => { setPreselectedTablet(tablet); setPreselectedStudent(null); setActiveTab('assignments'); };
+
+  // Always use the latest student master data for attendance display.
+  // Existing attendance records may contain stale/missing PIN or class values.
+  const attendanceRecordsWithStudentDetails = attendanceRecords.map((record) => ({
+    ...record,
+    details: record.details.map((detail) => {
+      const student = students.find((s) => s.id === detail.studentId);
+      if (!student) return detail;
+      return {
+        ...detail,
+        studentName: student.name,
+        pinNumber: student.pinNumber,
+        standard: student.standard,
+        isCoachingStudent: student.isCoachingStudent,
+        assignedTabletNumber: student.assignedTabletNumber,
+      };
+    }),
+  }));
+
   if (!currentUser) return <SuperAdminLogin isOpen={true} onLoginSuccess={handleLoginSuccess} />;
   const pageFallback = <div className="flex-1 min-h-[70vh] flex items-center justify-center text-sm font-semibold text-slate-500">Loading page...</div>;
 
   return <div className="min-h-screen bg-[var(--bg-color,#F8FAFC)] text-[var(--font-color,#0F172A)] font-sans antialiased selection:bg-indigo-600 selection:text-white flex"><Sidebar activeTab={activeTab} setActiveTab={setActiveTab} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} currentUser={currentUser} activeRole={activeRole} setActiveRole={handleRoleChange} onOpenSearch={() => setIsSearchOpen(true)} onOpenAuditLogs={() => setIsAuditLogsOpen(true)} onOpenUsersModal={() => setIsUsersModalOpen(true)} onOpenThemeModal={() => setIsThemeModalOpen(true)} onOpenLogout={() => setIsLogoutOpen(true)} /><main className={`flex-1 transition-all duration-300 min-w-0 ${sidebarCollapsed ? 'ml-16' : 'ml-16 sm:ml-64'} ${activeTab === 'attendance' ? 'h-screen overflow-hidden p-4 sm:p-6 flex flex-col' : 'p-4 sm:p-6 min-h-screen'}`}>
     {activeTab === 'dashboard' && <><DashboardView students={students} tablets={tablets} boxes={boxes} attendanceRecords={attendanceRecords} onNavigate={(tab) => setActiveTab(tab)} /><CheckoutRequestsPanel /></>}
-    {activeTab === 'attendance' && <PageErrorBoundary pageName="Attendance"><Suspense fallback={pageFallback}><DigitalAttendance students={students} attendanceRecords={attendanceRecords} onSaveAttendanceRecords={handleSaveAttendance} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} /></Suspense></PageErrorBoundary>}
+    {activeTab === 'attendance' && <PageErrorBoundary pageName="Attendance"><Suspense fallback={pageFallback}><DigitalAttendance students={students} attendanceRecords={attendanceRecordsWithStudentDetails} onSaveAttendanceRecords={handleSaveAttendance} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} /></Suspense></PageErrorBoundary>}
     {activeTab === 'students' && <StudentManagementSafe students={students} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssignTablet={handleQuickAssignFromStudent} />}
     {activeTab === 'boxes' && <TabletBoxManagement boxes={boxes} tablets={tablets} students={students} onSaveBoxes={handleSaveBoxes} onSaveTablets={handleSaveTablets} onSaveStudents={handleSaveStudents} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} />}
     {activeTab === 'tablets' && <TabletManagement tablets={tablets} students={students} boxes={boxes} onSaveTablets={handleSaveTablets} onSaveBoxes={handleSaveBoxes} activeRole={activeRole} onNavigate={(tab) => setActiveTab(tab)} onQuickAssign={handleQuickAssignFromTablet} />}
@@ -90,4 +109,4 @@ function MainApp() {
   </main><GlobalSearchModal students={students} tablets={tablets} boxes={boxes} assignments={assignments} isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onNavigate={(tab) => setActiveTab(tab)} /><AuditLogsModal isOpen={isAuditLogsOpen} onClose={() => setIsAuditLogsOpen(false)} onResetData={handleResetData} /><ThemeSettingsModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} /><LogoutModal isOpen={isLogoutOpen} onClose={() => setIsLogoutOpen(false)} onConfirmLogout={handleConfirmLogout} userName={currentUser?.fullName} /></div>;
 }
 
-export default function App() { if (window.location.pathname === '/student/download') return <StudentDownload />; if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) return <StudentTabletApp />; return <ThemeProvider><MainApp /></ThemeProvider>; }
+export default function App() { if (window.location.pathname === '/student/download') return <StudentDownload />; if (window.location.pathname === '/student' || window.location.pathname.startsWith('/student/')) return <StudentTabletApp />; return <ThemeProvider><MainApp /></ThemeProvider>;
