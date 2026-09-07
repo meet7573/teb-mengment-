@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
+import { Sidebar } from './components/Sidebar';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { DashboardView } from './components/Dashboard/DashboardView';
 import { CheckoutRequestsPanel } from './components/Dashboard/CheckoutRequestsPanel';
