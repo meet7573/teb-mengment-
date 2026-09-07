@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Download, ExternalLink, Copy, Check, Smartphone, ShieldCheck } from 'lucide-react';
 
-const APK_URL = 'https://github.com/meet7573/teb-mengment-/releases/download/student-apk-latest/teb-student.apk';
+const APK_URL = 'https://github.com/meet7573/teb-mengment-/releases/download/student-apk-latest/app-debug.apk';
 const STUDENT_APP_URL = 'https://teb-mengment.onrender.com/student';
 
 export const StudentDownload: React.FC = () => {
