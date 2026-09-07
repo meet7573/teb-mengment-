@@ -13,14 +13,26 @@ export function saveStoredRole(role: UserRole) {
   localStorage.setItem(KEYS.ACTIVE_ROLE, role);
 }
 
-// Manual reset only. This clears the persistent PostgreSQL database and local cache.
+// Manual reset only. This clears persistent application data and local cache.
+// Authentication/session configuration is intentionally preserved.
 export async function clearAllDatabase() {
   const response = await fetch('/api/db', { method: 'DELETE' });
   if (!response.ok) throw new Error('Could not reset persistent database');
 
-  const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'auditLogs'];
-  for (const c of collections) {
-    localStorage.removeItem(`db_${c}`);
+  const collections = [
+    'students',
+    'tablets',
+    'boxes',
+    'assignments',
+    'attendance',
+    'movements',
+    'auditLogs',
+    'studentSessions',
+    'checkoutRequests',
+  ];
+
+  for (const collection of collections) {
+    localStorage.removeItem(`db_${collection}`);
   }
 }
 
