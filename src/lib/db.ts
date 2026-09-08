@@ -113,12 +113,17 @@ export function subscribeToCollection<T>(collectionName: string, callback: (data
     catch (error) { console.error(`Failed to refresh ${collectionName} from the database`, error); if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]); }
     finally { refreshing = false; }
   };
-  // Load once when the component subscribes. Do NOT poll every few seconds:
-  // polling every collection was creating continuous network requests and could
-  // also overwrite newer state with stale data.
+  // Load once when the component subscribes.
   void refresh();
 
-  // Refresh only when the user returns to the application.
+  // Refresh while the tab is visible so concurrent admin edits propagate
+  // without requiring a focus/visibility change. Pause automatically while
+  // hidden to avoid unnecessary requests.
+  const pollInterval = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void refresh();
+  }, 20_000);
+
+  // Keep the existing focus/visibility-triggered refresh as an additive path.
   const onVisibilityChange = () => {
     if (document.visibilityState === 'visible') void refresh();
   };
@@ -129,6 +134,7 @@ export function subscribeToCollection<T>(collectionName: string, callback: (data
     stopped = true;
     window.removeEventListener('focus', refresh);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.clearInterval(pollInterval);
     listeners[collectionName]?.delete(callback);
   };
 }
