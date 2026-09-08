@@ -139,11 +139,41 @@ export function subscribeToCollection<T>(collectionName: string, callback: (data
   };
 }
 
-export async function syncCollection<T extends { id: string }>(collectionName: string, _current: T[], updated: T[]) {
-  const normalizedUpdated = normalizeCollectionData(collectionName, updated) as T[];
-  const response = await fetch(`/api/db/${collectionName}`, { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(normalizedUpdated) });
-  if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-  if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
+export async function syncCollection<T extends { id: string }>(collectionName: string, current: T[], updated: T[]) {
+  const normalizedCurrent = normalizeCollectionData(collectionName, Array.isArray(current) ? current : []) as T[];
+  const normalizedUpdated = normalizeCollectionData(collectionName, Array.isArray(updated) ? updated : []) as T[];
+  const currentById = new Map(normalizedCurrent.map((item) => [String(item.id), item]));
+  const updatedById = new Map(normalizedUpdated.map((item) => [String(item.id), item]));
+
+  // Persist only changed/new records. This preserves unrelated concurrent
+  // edits because a stale browser never sends the rest of its old collection.
+  const changedRecords = normalizedUpdated.filter((item) => {
+    const id = String(item.id ?? '').trim();
+    if (!id) return false;
+    const previous = currentById.get(id);
+    return !previous || JSON.stringify(previous) !== JSON.stringify(item);
+  });
+
+  // Deletions are also targeted. This preserves the old caller contract where
+  // callers submit the resulting array, without requiring a whole-collection
+  // replacement on the server.
+  const deletedIds = [...currentById.keys()].filter((id) => !updatedById.has(id));
+
+  if (changedRecords.length > 0) {
+    const response = await fetch(`/api/db/${collectionName}`, { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(changedRecords) });
+    if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
+    if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
+  }
+
+  if (deletedIds.length > 0) {
+    const deleteResults = await Promise.all(deletedIds.map((id) =>
+      fetch(`/api/db/${encodeURIComponent(collectionName)}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: adminHeaders() })
+    ));
+    for (const response of deleteResults) {
+      if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
+      if (!response.ok && import.meta.env.PROD) throw new Error(`Database delete failed: ${response.status}`);
+    }
+  }
 
   setLocalData(collectionName, normalizedUpdated);
 }
