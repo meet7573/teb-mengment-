@@ -91,6 +91,7 @@ function normalizeCollectionData(collectionName: string, data: any[]): any[] {
   if (collectionName === 'tablets') return visibleData.map((tablet) => { const rawStatus = String(tablet?.status ?? '').trim().toLowerCase(); const status = rawStatus === 'assigned' ? 'Assigned' : rawStatus === 'maintenance' ? 'Maintenance' : 'Available'; return { ...tablet, status }; });
   if (collectionName === 'assignments') return visibleData.map((assignment) => ({ ...assignment, status: String(assignment?.status ?? '').trim().toLowerCase() === 'returned' ? 'Returned' : 'Active' }));
   if (collectionName === 'attendance') return normalizeAttendanceRows(visibleData);
+  if (collectionName === 'boxes') return visibleData.map((box) => ({ ...box, tablets: Array.isArray(box?.tablets) ? box.tablets : [] }));
   return visibleData;
 }
 
