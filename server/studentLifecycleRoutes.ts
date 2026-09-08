@@ -6,20 +6,12 @@ function hash(value: string) { return createHash('sha256').update(value).digest(
 function pinSecret(ctx: Ctx) { return String(process.env.PIN_PEPPER || ctx.supabaseKey || 'student-pin-secret'); }
 function pinLookupHash(pin: string, ctx: Ctx) { return createHmac('sha256', pinSecret(ctx)).update(pin).digest('hex'); }
 function createPinCredentials(pin: string, ctx: Ctx) { const salt = randomBytes(16).toString('hex'); return { pinSalt: salt, pinHash: hash(`${pin}${salt}`), pinLookupHash: pinLookupHash(pin, ctx), pinNumber: 'PIN-****' }; }
-function verifyPin(pin: string, student: any) {
-  const storedHash = String(student?.pinHash ?? '').trim();
-  const salt = String(student?.pinSalt ?? '').trim();
-  if (storedHash && salt) return hash(`${pin}${salt}`) === storedHash;
-  return Boolean(storedHash) && hash(pin) === storedHash;
-}
+function verifyPin(pin: string, student: any) { const storedHash = String(student?.pinHash ?? '').trim(); const salt = String(student?.pinSalt ?? '').trim(); if (storedHash && salt) return hash(`${pin}${salt}`) === storedHash; return Boolean(storedHash) && hash(pin) === storedHash; }
 function normalizePin(value: unknown) { return String(value ?? '').trim().replace(/^PIN[-\s:]*/i, '').replace(/\D/g, '').trim(); }
 function validPin(pin: string) { return /^\d{4}$/.test(pin); }
 function maskPin(pin: string) { const digits = normalizePin(pin); return digits.length === 4 ? `PIN-**${digits.slice(-2)}` : 'PIN-****'; }
 function same(a: unknown, b: string) { return String(a ?? '').trim().toLowerCase() === b.trim().toLowerCase(); }
-async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) {
-  if (!ctx.supabaseUrl || !ctx.supabaseKey) throw new Error('Supabase is not configured');
-  return fetch(`${ctx.supabaseUrl.replace(/\/$/, '')}/rest/v1/${pathname}`, { ...options, headers: { apikey: ctx.supabaseKey, Authorization: `Bearer ${ctx.supabaseKey}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
-}
+async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) { if (!ctx.supabaseUrl || !ctx.supabaseKey) throw new Error('Supabase is not configured'); return fetch(`${ctx.supabaseUrl.replace(/\/$/, '')}/rest/v1/${pathname}`, { ...options, headers: { apikey: ctx.supabaseKey, Authorization: `Bearer ${ctx.supabaseKey}`, 'Content-Type': 'application/json', ...(options.headers || {}) } }); }
 async function rows(ctx: Ctx, collection: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`); if (!r.ok) throw new Error(`Read ${collection} failed: ${r.status}`); return (await r.json()).map((x: any) => x.data); }
 async function insert(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, 'app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data }) }); if (!r.ok) throw new Error(`Insert ${collection} failed: ${r.status} ${await r.text()}`); }
 async function patch(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data, updated_at: new Date().toISOString() }) }); if (!r.ok) throw new Error(`Update ${collection} failed: ${r.status} ${await r.text()}`); }
@@ -30,128 +22,34 @@ async function requireAdmin(ctx: Ctx, req: express.Request) {
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return false;
   try {
+    const tokenHash = hash(token);
     const sessions = await rows(ctx, 'adminSessions');
-    const session = sessions.find((x: any) => String(x?.id) === token && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now());
+    const session = sessions.find((x: any) => String(x?.id) === tokenHash && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && String(x?.tokenHash) === tokenHash);
     return Boolean(session);
   } catch { return false; }
 }
 
-function validateRegistration(body: any) {
-  const name = String(body?.name ?? '').trim();
-  const email = String(body?.email ?? '').trim().toLowerCase();
-  const pin = normalizePin(body?.pin);
-  const standard = String(body?.standard ?? '').trim();
-  const coachingType = String(body?.coachingType ?? '').trim();
-  const roomNumber = String(body?.roomNumber ?? '').trim();
-  const wingNumber = String(body?.wingNumber ?? '').trim();
-  return { name, email, pin, standard, coachingType, roomNumber, wingNumber };
-}
+function validateRegistration(body: any) { const name = String(body?.name ?? '').trim(); const email = String(body?.email ?? '').trim().toLowerCase(); const pin = normalizePin(body?.pin); const standard = String(body?.standard ?? '').trim(); const coachingType = String(body?.coachingType ?? '').trim(); const roomNumber = String(body?.roomNumber ?? '').trim(); const wingNumber = String(body?.wingNumber ?? '').trim(); return { name, email, pin, standard, coachingType, roomNumber, wingNumber }; }
 
 export function createStudentLifecycleRoutes(ctx: Ctx) {
   const router = express.Router();
-
   router.post('/register', async (req, res) => {
     if (!await requireAdmin(ctx, req)) return res.status(401).json({ error: 'Admin session required. Please login again.' });
     if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
     const { name, email, pin, standard, coachingType, roomNumber, wingNumber } = validateRegistration(req.body);
     if (!name || !email || !/^\S+@\S+\.\S+$/.test(email) || !validPin(pin) || !standard || !roomNumber || !wingNumber) return res.status(400).json({ error: 'Name, valid Email ID, unique 4-digit PIN, standard, room and wing are required.' });
     if (!['Coaching', 'Non-Coaching'].includes(coachingType)) return res.status(400).json({ error: 'Coaching type must be Coaching or Non-Coaching.' });
-    try {
-      const students = await rows(ctx, 'students');
-      if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered.' });
-      if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString();
-      const student = { id: studentId, name, email, emailApproved: true, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now };
-      await insert(ctx, 'students', studentId, student);
-      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTERED', studentId, email, emailApproved: true, source: 'ADMIN', timestamp: now });
-      return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: maskPin(pin), status: 'Pending' }, appPin: pin });
-    } catch (error) { console.error('Student registration failed:', error); return res.status(500).json({ error: 'Student registration could not be completed.' }); }
+    try { const students = await rows(ctx, 'students'); if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered.' }); if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' }); const studentId = randomUUID(); const now = new Date().toISOString(); const student = { id: studentId, name, email, emailApproved: true, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now }; await insert(ctx, 'students', studentId, student); const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTERED', studentId, email, emailApproved: true, source: 'ADMIN', timestamp: now }); return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: maskPin(pin), status: 'Pending' }, appPin: pin }); } catch (error) { console.error('Student registration failed:', error); return res.status(500).json({ error: 'Student registration could not be completed.' }); }
   });
-
   router.post('/request-registration', async (req, res) => {
-    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    if (!allowed(`registration:${ip}`)) return res.status(429).json({ error: 'Too many registration attempts. Try again in a minute.' });
-    const { name, email, pin, standard, coachingType, roomNumber, wingNumber } = validateRegistration(req.body);
-    if (!name || !email || !/^\S+@\S+\.\S+$/.test(email) || !validPin(pin) || !standard || !roomNumber || !wingNumber) return res.status(400).json({ error: 'Name, valid Email ID, 4-digit PIN, standard, room and wing are required.' });
-    if (!['Coaching', 'Non-Coaching'].includes(coachingType)) return res.status(400).json({ error: 'Coaching type must be Coaching or Non-Coaching.' });
-    try {
-      const students = await rows(ctx, 'students');
-      if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered or already awaiting approval.' });
-      if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString();
-      const student = { id: studentId, name, email, emailApproved: false, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now };
-      await insert(ctx, 'students', studentId, student);
-      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTRATION_REQUESTED', studentId, email, emailApproved: false, source: 'STUDENT_APP', timestamp: now });
-      return res.status(201).json({ ok: true, student: { id: studentId, name, email, emailApproved: false, status: 'Pending' }, message: 'Registration request submitted. Please wait for Admin approval before logging in.' });
-    } catch (error) { console.error('Student registration request failed:', error); return res.status(500).json({ error: 'Registration request could not be submitted.' }); }
+    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' }); const ip = req.ip || req.socket.remoteAddress || 'unknown'; if (!allowed(`registration:${ip}`)) return res.status(429).json({ error: 'Too many registration attempts. Try again in a minute.' }); const { name, email, pin, standard, coachingType, roomNumber, wingNumber } = validateRegistration(req.body); if (!name || !email || !/^\S+@\S+\.\S+$/.test(email) || !validPin(pin) || !standard || !roomNumber || !wingNumber) return res.status(400).json({ error: 'Name, valid Email ID, 4-digit PIN, standard, room and wing are required.' }); if (!['Coaching', 'Non-Coaching'].includes(coachingType)) return res.status(400).json({ error: 'Coaching type must be Coaching or Non-Coaching.' }); try { const students = await rows(ctx, 'students'); if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered or already awaiting approval.' }); if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' }); const studentId = randomUUID(); const now = new Date().toISOString(); const student = { id: studentId, name, email, emailApproved: false, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now }; await insert(ctx, 'students', studentId, student); const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTRATION_REQUESTED', studentId, email, emailApproved: false, source: 'STUDENT_APP', timestamp: now }); return res.status(201).json({ ok: true, student: { id: studentId, name, email, emailApproved: false, status: 'Pending' }, message: 'Registration request submitted. Please wait for Admin approval before logging in.' }); } catch (error) { console.error('Student registration request failed:', error); return res.status(500).json({ error: 'Registration request could not be submitted.' }); }
   });
-
   router.post('/activate', async (req, res) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    if (!allowed(ip)) return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' });
-    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
-    const email = String(req.body?.email ?? '').trim().toLowerCase(); const name = String(req.body?.name ?? '').trim(); const pin = normalizePin(req.body?.pin);
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid approved email ID is required.' });
-    if (!name) return res.status(400).json({ error: 'Student Name is required.' });
-    if (!validPin(pin)) return res.status(400).json({ error: 'Student PIN must be exactly 4 digits.' });
-    try {
-      const [students, sessions, attendance] = await Promise.all([rows(ctx, 'students'), rows(ctx, 'studentSessions'), rows(ctx, 'attendance')]);
-      const student = students.find((item: any) => same(item?.email, email) && same(item?.name, name));
-      if (!student || !verifyPin(pin, student)) return res.status(401).json({ error: 'Student Name, Email ID or PIN is incorrect.' });
-      if (!student.pinSalt || !student.pinLookupHash || String(student.pinNumber || '').includes(pin)) {
-        const credentials = createPinCredentials(pin, ctx);
-        const migrated = { ...student, ...credentials };
-        delete migrated.pin;
-        await patch(ctx, 'students', String(student.id), migrated);
-        Object.assign(student, migrated);
-      }
-      if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' });
-      if (student.isActive === false || !['approved', 'active', 'present'].includes(String(student?.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' });
-      const assignedTabletId = String(student?.assignedTabletId ?? student?.assignedTabletNumber ?? student?.tabletId ?? '').trim().toUpperCase();
-      if (!assignedTabletId) return res.status(409).json({ error: 'No tablet has been assigned to this student. Please contact Admin.' });
-      const studentId = String(student?.id ?? student?.studentId ?? '').trim(); if (!studentId) return res.status(500).json({ error: 'Student record is missing an ID.' });
-      if (sessions.some((item: any) => item?.status === 'active' && (same(item?.studentId, studentId) || String(item?.tabletId ?? '').trim().toUpperCase() === assignedTabletId))) return res.status(409).json({ error: 'This student or assigned tablet already has an active session.' });
-      if (attendance.some((item: any) => String(item?.studentId) === studentId && String(item?.status ?? '').toUpperCase() === 'IN' && !item?.returnedAt)) return res.status(409).json({ error: 'This student is already checked in.' });
-      const sessionToken = randomUUID(); const startedAt = new Date().toISOString(); const studentName = String(student?.name ?? 'Student').trim() || 'Student';
-      await insert(ctx, 'studentSessions', sessionToken, { id: sessionToken, sessionTokenHash: hash(sessionToken), studentId, tabletId: assignedTabletId, studentName, startedAt, returnedAt: null, durationMinutes: null, status: 'active' });
-      const attendanceId = randomUUID(); await insert(ctx, 'attendance', attendanceId, { id: attendanceId, sessionId: sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, returnedAt: null, durationMinutes: null, status: 'IN', date: startedAt.slice(0, 10) });
-      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_CHECK_IN', studentId, tabletId: assignedTabletId, sessionId: sessionToken, timestamp: startedAt });
-      return res.json({ session: { sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, student: { name: studentName, email, standard: String(student?.standard ?? ''), coachingType: String(student?.coachingType ?? ''), roomNumber: String(student?.roomNumber ?? ''), wingNumber: String(student?.wingNumber ?? ''), tabletId: assignedTabletId } } });
-    } catch (error) { console.error('Student email login failed:', error); return res.status(500).json({ error: 'Student login could not be completed.' }); }
+    const ip = req.ip || req.socket.remoteAddress || 'unknown'; if (!allowed(ip)) return res.status(429).json({ error: 'Too many login attempts. Try again in a minute.' }); if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' }); const email = String(req.body?.email ?? '').trim().toLowerCase(); const name = String(req.body?.name ?? '').trim(); const pin = normalizePin(req.body?.pin); if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'A valid approved email ID is required.' }); if (!name) return res.status(400).json({ error: 'Student Name is required.' }); if (!validPin(pin)) return res.status(400).json({ error: 'Student PIN must be exactly 4 digits.' });
+    try { const [students, sessions, attendance] = await Promise.all([rows(ctx, 'students'), rows(ctx, 'studentSessions'), rows(ctx, 'attendance')]); const student = students.find((item: any) => same(item?.email, email) && same(item?.name, name)); if (!student || !verifyPin(pin, student)) return res.status(401).json({ error: 'Student Name, Email ID or PIN is incorrect.' }); if (!student.pinSalt || !student.pinLookupHash || String(student.pinNumber || '').includes(pin)) { const credentials = createPinCredentials(pin, ctx); const migrated = { ...student, ...credentials }; delete migrated.pin; await patch(ctx, 'students', String(student.id), migrated); Object.assign(student, migrated); } if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' }); if (student.isActive === false || !['approved', 'active', 'present'].includes(String(student?.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' }); const assignedTabletId = String(student?.assignedTabletId ?? student?.assignedTabletNumber ?? student?.tabletId ?? '').trim().toUpperCase(); if (!assignedTabletId) return res.status(409).json({ error: 'No tablet has been assigned to this student. Please contact Admin.' }); const studentId = String(student?.id ?? student?.studentId ?? '').trim(); if (!studentId) return res.status(500).json({ error: 'Student record is missing an ID.' }); if (sessions.some((item: any) => item?.status === 'active' && (same(item?.studentId, studentId) || String(item?.tabletId ?? '').trim().toUpperCase() === assignedTabletId))) return res.status(409).json({ error: 'This student or assigned tablet already has an active session.' }); if (attendance.some((item: any) => String(item?.studentId) === studentId && String(item?.status ?? '').toUpperCase() === 'IN' && !item?.returnedAt)) return res.status(409).json({ error: 'This student is already checked in.' }); const sessionToken = randomUUID(); const startedAt = new Date().toISOString(); const studentName = String(student?.name ?? 'Student').trim() || 'Student'; await insert(ctx, 'studentSessions', sessionToken, { id: sessionToken, sessionTokenHash: hash(sessionToken), studentId, tabletId: assignedTabletId, studentName, startedAt, returnedAt: null, durationMinutes: null, status: 'active' }); const attendanceId = randomUUID(); await insert(ctx, 'attendance', attendanceId, { id: attendanceId, sessionId: sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, returnedAt: null, durationMinutes: null, status: 'IN', date: startedAt.slice(0, 10) }); const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_CHECK_IN', studentId, tabletId: assignedTabletId, sessionId: sessionToken, timestamp: startedAt }); return res.json({ session: { sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, student: { name: studentName, email, standard: String(student?.standard ?? ''), coachingType: String(student?.coachingType ?? ''), roomNumber: String(student?.roomNumber ?? ''), wingNumber: String(student?.wingNumber ?? ''), tabletId: assignedTabletId } } }); } catch (error) { console.error('Student email login failed:', error); return res.status(500).json({ error: 'Student login could not be completed.' }); }
   });
-
-  router.get('/session', async (req, res) => {
-    if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-    if (!token || token.length > 100) return res.status(401).json({ error: 'Session required.' });
-    try {
-      const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => String(x?.id) === token && x?.status === 'active' && x?.sessionTokenHash === hash(token));
-      if (!session) return res.status(401).json({ error: 'Session is no longer active.' });
-      const students = await rows(ctx, 'students'); const student = students.find((x: any) => String(x?.id ?? x?.studentId ?? '') === String(session.studentId));
-      if (!student || student.isActive === false) return res.status(401).json({ error: 'Student is no longer active.' });
-      if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' });
-      if (!['approved', 'active', 'present'].includes(String(student.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' });
-      return res.json({ session: { sessionToken: token, studentId: String(session.studentId), studentName: String(student.name ?? session.studentName ?? 'Student'), tabletId: String(session.tabletId), startedAt: String(session.startedAt), student: { name: String(student.name ?? ''), email: String(student.email ?? ''), standard: String(student.standard ?? ''), coachingType: String(student.coachingType ?? ''), roomNumber: String(student.roomNumber ?? ''), wingNumber: String(student.wingNumber ?? ''), tabletId: String(student.assignedTabletId ?? session.tabletId) } } });
-    } catch (error) { console.error('Student session restore failed:', error); return res.status(500).json({ error: 'Could not restore session.' }); }
-  });
-
-  router.post('/checkout-request', async (req, res) => {
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return res.status(401).json({ error: 'Student session required.' });
-    try {
-      const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.status === 'active' && x?.sessionTokenHash === hash(token)); if (!session) return res.status(401).json({ error: 'Active student session not found.' });
-      const requests = await rows(ctx, 'checkoutRequests'); const existing = requests.find((x: any) => String(x?.studentId) === String(session.studentId) && String(x?.status || '').toLowerCase() === 'pending'); if (existing) return res.status(409).json({ error: 'A checkout request is already pending.', request: existing });
-      const id = randomUUID(); const now = new Date().toISOString(); const request = { id, studentId: String(session.studentId), studentName: String(session.studentName || 'Student'), sessionId: String(session.id), tabletId: String(session.tabletId), status: 'pending', requestedAt: now };
-      await insert(ctx, 'checkoutRequests', id, request); const verify = await rows(ctx, 'checkoutRequests'); const saved = verify.find((x: any) => String(x?.id) === id); if (!saved) throw new Error('Checkout request was not persisted in database.');
-      const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'CHECKOUT_REQUESTED', studentId: String(session.studentId), tabletId: String(session.tabletId), timestamp: now });
-      return res.status(201).json({ ok: true, request: saved });
-    } catch (e) { console.error('Checkout request failed', e); return res.status(500).json({ error: 'Checkout request could not be created.' }); }
-  });
-
-  router.get('/activity', async (req, res) => {
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return res.status(401).json({ error: 'Student session required.' });
-    try { const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.sessionTokenHash === hash(token)); if (!session) return res.status(401).json({ error: 'Invalid student session.' }); const logs = await rows(ctx, 'auditLogs'); return res.json({ activities: logs.filter((x: any) => String(x?.studentId) === String(session.studentId)).sort((a: any,b: any) => String(b.timestamp).localeCompare(String(a.timestamp))).slice(0,100) }); } catch { return res.status(500).json({ error: 'Could not load activity.' }); }
-  });
-
+  router.get('/session', async (req, res) => { if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' }); const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token || token.length > 100) return res.status(401).json({ error: 'Session required.' }); try { const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => String(x?.id) === token && x?.status === 'active' && x?.sessionTokenHash === hash(token)); if (!session) return res.status(401).json({ error: 'Session is no longer active.' }); const students = await rows(ctx, 'students'); const student = students.find((x: any) => String(x?.id ?? x?.studentId ?? '') === String(session.studentId)); if (!student || student.isActive === false) return res.status(401).json({ error: 'Student is no longer active.' }); if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' }); if (!['approved', 'active', 'present'].includes(String(student.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' }); return res.json({ session: { sessionToken: token, studentId: String(session.studentId), studentName: String(student.name ?? session.studentName ?? 'Student'), tabletId: String(session.tabletId), startedAt: String(session.startedAt), student: { name: String(student.name ?? ''), email: String(student.email ?? ''), standard: String(student.standard ?? ''), coachingType: String(student.coachingType ?? ''), roomNumber: String(student.roomNumber ?? ''), wingNumber: String(student.wingNumber ?? ''), tabletId: String(student.assignedTabletId ?? session.tabletId) } } }); } catch (error) { console.error('Student session restore failed:', error); return res.status(500).json({ error: 'Could not restore session.' }); } });
+  router.post('/checkout-request', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return res.status(401).json({ error: 'Student session required.' }); try { const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.status === 'active' && x?.sessionTokenHash === hash(token)); if (!session) return res.status(401).json({ error: 'Active student session not found.' }); const requests = await rows(ctx, 'checkoutRequests'); const existing = requests.find((x: any) => String(x?.studentId) === String(session.studentId) && String(x?.status || '').toLowerCase() === 'pending'); if (existing) return res.status(409).json({ error: 'A checkout request is already pending.', request: existing }); const id = randomUUID(); const now = new Date().toISOString(); const request = { id, studentId: String(session.studentId), studentName: String(session.studentName || 'Student'), sessionId: String(session.id), tabletId: String(session.tabletId), status: 'pending', requestedAt: now }; await insert(ctx, 'checkoutRequests', id, request); const verify = await rows(ctx, 'checkoutRequests'); const saved = verify.find((x: any) => String(x?.id) === id); if (!saved) throw new Error('Checkout request was not persisted in database.'); const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'CHECKOUT_REQUESTED', studentId: String(session.studentId), tabletId: String(session.tabletId), timestamp: now }); return res.status(201).json({ ok: true, request: saved }); } catch (e) { console.error('Checkout request failed', e); return res.status(500).json({ error: 'Checkout request could not be created.' }); } });
+  router.get('/activity', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return res.status(401).json({ error: 'Student session required.' }); try { const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.sessionTokenHash === hash(token)); if (!session) return res.status(401).json({ error: 'Invalid student session.' }); const logs = await rows(ctx, 'auditLogs'); return res.json({ activities: logs.filter((x: any) => String(x?.studentId) === String(session.studentId)).sort((a: any,b: any) => String(b.timestamp).localeCompare(String(a.timestamp))).slice(0,100) }); } catch { return res.status(500).json({ error: 'Could not load activity.' }); } });
   return router;
 }
