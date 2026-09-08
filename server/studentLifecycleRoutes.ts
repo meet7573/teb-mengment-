@@ -1,12 +1,13 @@
 import express from 'express';
-import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
+import { randomUUID, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 type Ctx = { supabaseUrl?: string; supabaseKey?: string };
 function hash(value: string) { return createHash('sha256').update(value).digest('hex'); }
+function safeEqualHex(a: unknown, b: unknown) { const left = Buffer.from(String(a ?? ''), 'hex'); const right = Buffer.from(String(b ?? ''), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 function pinSecret(ctx: Ctx) { return String(process.env.PIN_PEPPER || ctx.supabaseKey || 'student-pin-secret'); }
 function pinLookupHash(pin: string, ctx: Ctx) { return createHmac('sha256', pinSecret(ctx)).update(pin).digest('hex'); }
 function createPinCredentials(pin: string, ctx: Ctx) { const salt = randomBytes(16).toString('hex'); return { pinSalt: salt, pinHash: hash(`${pin}${salt}`), pinLookupHash: pinLookupHash(pin, ctx), pinNumber: 'PIN-****' }; }
-function verifyPin(pin: string, student: any) { const storedHash = String(student?.pinHash ?? '').trim(); const salt = String(student?.pinSalt ?? '').trim(); if (storedHash && salt) return hash(`${pin}${salt}`) === storedHash; return Boolean(storedHash) && hash(pin) === storedHash; }
+function verifyPin(pin: string, student: any) { const storedHash = String(student?.pinHash ?? '').trim(); const salt = String(student?.pinSalt ?? '').trim(); if (storedHash && salt) return safeEqualHex(hash(`${pin}${salt}`), storedHash); return Boolean(storedHash) && safeEqualHex(hash(pin), storedHash); }
 function normalizePin(value: unknown) { return String(value ?? '').trim().replace(/^PIN[-\s:]*/i, '').replace(/\D/g, '').trim(); }
 function validPin(pin: string) { return /^\d{4}$/.test(pin); }
 function maskPin(pin: string) { const digits = normalizePin(pin); return digits.length === 4 ? `PIN-**${digits.slice(-2)}` : 'PIN-****'; }
@@ -21,10 +22,10 @@ const ACCOUNT_LOCK_WINDOW_MS = 15 * 60_000;
 const ACCOUNT_LOCK_MAX_FAILURES = 5;
 function accountKey(student: any, email: string) { return String(student?.id || email).trim().toLowerCase(); }
 function accountLockRemaining(key: string) { const now = Date.now(); const state = pinAccountFailures.get(key); if (!state) return 0; if (state.lockedUntil && state.lockedUntil > now) return state.lockedUntil - now; if (state.resetAt <= now) { pinAccountFailures.delete(key); return 0; } return 0; }
-function recordPinFailure(key: string): { count: number; resetAt: number; lockedUntil?: number } { const now = Date.now(); const current = pinAccountFailures.get(key); if (!current || current.resetAt <= now) { const next = { count: 1, resetAt: now + ACCOUNT_LOCK_WINDOW_MS }; pinAccountFailures.set(key, next); return next; } current.count += 1; if (current.count >= ACCOUNT_LOCK_MAX_FAILURES) current.lockedUntil = now + ACCOUNT_LOCK_WINDOW_MS; return current; }
+function recordPinFailure(key: string): { count: number; resetAt: number; lockedUntil?: number } { const now = Date.now(); const current = pinAccountFailures.get(key); if (!current || current.resetAt <= now) { const next: { count: number; resetAt: number; lockedUntil?: number } = { count: 1, resetAt: now + ACCOUNT_LOCK_WINDOW_MS }; pinAccountFailures.set(key, next); return next; } current.count += 1; if (current.count >= ACCOUNT_LOCK_MAX_FAILURES) current.lockedUntil = now + ACCOUNT_LOCK_WINDOW_MS; return current; }
 function clearPinFailures(key: string) { pinAccountFailures.delete(key); }
 function allowed(ip: string) { const now = Date.now(); const current = attempts.get(ip); if (!current || current.resetAt <= now) { attempts.set(ip, { count: 1, resetAt: now + 60_000 }); return true; } if (current.count >= 5) return false; current.count += 1; return true; }
-async function requireAdmin(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return false; try { const tokenHash = hash(token); const sessions = await rows(ctx, 'adminSessions'); const session = sessions.find((x: any) => String(x?.id) === tokenHash && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && String(x?.tokenHash) === tokenHash); return Boolean(session); } catch { return false; } }
+async function requireAdmin(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token) return false; try { const tokenHash = hash(token); const sessions = await rows(ctx, 'adminSessions'); const session = sessions.find((x: any) => String(x?.id) === tokenHash && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && safeEqualHex(x?.tokenHash, tokenHash)); return Boolean(session); } catch { return false; } }
 function validateRegistration(body: any) { const name = String(body?.name ?? '').trim(); const email = String(body?.email ?? '').trim().toLowerCase(); const pin = normalizePin(body?.pin); const standard = String(body?.standard ?? '').trim(); const coachingType = String(body?.coachingType ?? '').trim(); const roomNumber = String(body?.roomNumber ?? '').trim(); const wingNumber = String(body?.wingNumber ?? '').trim(); return { name, email, pin, standard, coachingType, roomNumber, wingNumber }; }
 export function createStudentLifecycleRoutes(ctx: Ctx) {
   const router = express.Router();
