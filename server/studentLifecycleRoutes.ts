@@ -1,8 +1,21 @@
 import express from 'express';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 type Ctx = { supabaseUrl?: string; supabaseKey?: string };
 function hash(value: string) { return createHash('sha256').update(value).digest('hex'); }
+function createPinCredentials(pin: string) { const salt = randomBytes(16).toString('hex'); return { pinSalt: salt, pinHash: hash(`${pin}${salt}`) }; }
+function verifyPin(pin: string, student: any) {
+  const storedHash = String(student?.pinHash ?? '').trim();
+  const salt = String(student?.pinSalt ?? '').trim();
+  if (storedHash && salt) {
+    const candidate = Buffer.from(hash(`${pin}${salt}`), 'hex');
+    const expected = Buffer.from(storedHash, 'hex');
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  }
+  // Backward compatibility for existing unsalted records. A successful legacy
+  // login is upgraded to a salted hash immediately by the activation route.
+  return Boolean(storedHash) && storedHash === hash(pin);
+}
 function normalizePin(value: unknown) { return String(value ?? '').trim().replace(/^PIN[-\s:]*/i, '').replace(/\D/g, '').trim(); }
 function validPin(pin: string) { return /^\d{4}$/.test(pin); }
 function same(a: unknown, b: string) { return String(a ?? '').trim().toLowerCase() === b.trim().toLowerCase(); }
@@ -12,6 +25,7 @@ async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) {
 }
 async function rows(ctx: Ctx, collection: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`); if (!r.ok) throw new Error(`Read ${collection} failed: ${r.status}`); return (await r.json()).map((x: any) => x.data); }
 async function insert(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, 'app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data }) }); if (!r.ok) throw new Error(`Insert ${collection} failed: ${r.status} ${await r.text()}`); }
+async function patch(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data, updated_at: new Date().toISOString() }) }); if (!r.ok) throw new Error(`Update ${collection} failed: ${r.status} ${await r.text()}`); }
 const attempts = new Map<string, { count: number; resetAt: number }>();
 function allowed(ip: string) { const now = Date.now(); const current = attempts.get(ip); if (!current || current.resetAt <= now) { attempts.set(ip, { count: 1, resetAt: now + 60_000 }); return true; } if (current.count >= 5) return false; current.count += 1; return true; }
 
@@ -51,8 +65,8 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
       const students = await rows(ctx, 'students');
       if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered.' });
       if (students.some((item: any) => normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString();
-      const student = { id: studentId, name, email, emailApproved: true, pinHash: hash(pin), pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now };
+      const studentId = randomUUID(); const now = new Date().toISOString(); const pinCredentials = createPinCredentials(pin);
+      const student = { id: studentId, name, email, emailApproved: true, ...pinCredentials, pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now };
       await insert(ctx, 'students', studentId, student);
       const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTERED', studentId, email, emailApproved: true, source: 'ADMIN', timestamp: now });
       return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: `PIN-${pin}`, status: 'Pending' }, appPin: pin });
@@ -72,8 +86,8 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
       const students = await rows(ctx, 'students');
       if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered or already awaiting approval.' });
       if (students.some((item: any) => normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString();
-      const student = { id: studentId, name, email, emailApproved: false, pinHash: hash(pin), pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now };
+      const studentId = randomUUID(); const now = new Date().toISOString(); const pinCredentials = createPinCredentials(pin);
+      const student = { id: studentId, name, email, emailApproved: false, ...pinCredentials, pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now };
       await insert(ctx, 'students', studentId, student);
       const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTRATION_REQUESTED', studentId, email, emailApproved: false, source: 'STUDENT_APP', timestamp: now });
       return res.status(201).json({ ok: true, student: { id: studentId, name, email, emailApproved: false, status: 'Pending' }, message: 'Registration request submitted. Please wait for Admin approval before logging in.' });
@@ -90,8 +104,13 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
     if (!validPin(pin)) return res.status(400).json({ error: 'Student PIN must be exactly 4 digits.' });
     try {
       const [students, sessions, attendance] = await Promise.all([rows(ctx, 'students'), rows(ctx, 'studentSessions'), rows(ctx, 'attendance')]);
-      const student = students.find((item: any) => same(item?.email, email) && same(item?.name, name) && normalizePin(item?.pinNumber ?? item?.pin) === pin);
-      if (!student) return res.status(401).json({ error: 'Student Name, Email ID or PIN is incorrect.' });
+      const student = students.find((item: any) => same(item?.email, email) && same(item?.name, name));
+      if (!student || !verifyPin(pin, student)) return res.status(401).json({ error: 'Student Name, Email ID or PIN is incorrect.' });
+      if (!student.pinSalt) {
+        const pinCredentials = createPinCredentials(pin);
+        await patch(ctx, 'students', String(student.id), { ...student, ...pinCredentials });
+        Object.assign(student, pinCredentials);
+      }
       if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' });
       if (student.isActive === false || !['approved', 'active', 'present'].includes(String(student?.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' });
       const assignedTabletId = String(student?.assignedTabletId ?? student?.assignedTabletNumber ?? student?.tabletId ?? '').trim().toUpperCase();
