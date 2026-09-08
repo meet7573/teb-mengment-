@@ -1,23 +1,20 @@
 import express from 'express';
-import { randomUUID, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 
 type Ctx = { supabaseUrl?: string; supabaseKey?: string };
 function hash(value: string) { return createHash('sha256').update(value).digest('hex'); }
-function createPinCredentials(pin: string) { const salt = randomBytes(16).toString('hex'); return { pinSalt: salt, pinHash: hash(`${pin}${salt}`) }; }
+function pinSecret(ctx: Ctx) { return String(process.env.PIN_PEPPER || ctx.supabaseKey || 'student-pin-secret'); }
+function pinLookupHash(pin: string, ctx: Ctx) { return createHmac('sha256', pinSecret(ctx)).update(pin).digest('hex'); }
+function createPinCredentials(pin: string, ctx: Ctx) { const salt = randomBytes(16).toString('hex'); return { pinSalt: salt, pinHash: hash(`${pin}${salt}`), pinLookupHash: pinLookupHash(pin, ctx), pinNumber: 'PIN-****' }; }
 function verifyPin(pin: string, student: any) {
   const storedHash = String(student?.pinHash ?? '').trim();
   const salt = String(student?.pinSalt ?? '').trim();
-  if (storedHash && salt) {
-    const candidate = Buffer.from(hash(`${pin}${salt}`), 'hex');
-    const expected = Buffer.from(storedHash, 'hex');
-    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
-  }
-  // Backward compatibility for existing unsalted records. A successful legacy
-  // login is upgraded to a salted hash immediately by the activation route.
-  return Boolean(storedHash) && storedHash === hash(pin);
+  if (storedHash && salt) return hash(`${pin}${salt}`) === storedHash;
+  return Boolean(storedHash) && hash(pin) === storedHash;
 }
 function normalizePin(value: unknown) { return String(value ?? '').trim().replace(/^PIN[-\s:]*/i, '').replace(/\D/g, '').trim(); }
 function validPin(pin: string) { return /^\d{4}$/.test(pin); }
+function maskPin(pin: string) { const digits = normalizePin(pin); return digits.length === 4 ? `PIN-**${digits.slice(-2)}` : 'PIN-****'; }
 function same(a: unknown, b: string) { return String(a ?? '').trim().toLowerCase() === b.trim().toLowerCase(); }
 async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) {
   if (!ctx.supabaseUrl || !ctx.supabaseKey) throw new Error('Supabase is not configured');
@@ -53,8 +50,6 @@ function validateRegistration(body: any) {
 export function createStudentLifecycleRoutes(ctx: Ctx) {
   const router = express.Router();
 
-  // Admin-created students are immediately email-authorized, but still require
-  // the normal Admin approval/tablet assignment flow before portal login.
   router.post('/register', async (req, res) => {
     if (!await requireAdmin(ctx, req)) return res.status(401).json({ error: 'Admin session required. Please login again.' });
     if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
@@ -64,17 +59,15 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
     try {
       const students = await rows(ctx, 'students');
       if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered.' });
-      if (students.some((item: any) => normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString(); const pinCredentials = createPinCredentials(pin);
-      const student = { id: studentId, name, email, emailApproved: true, ...pinCredentials, pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now };
+      if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
+      const studentId = randomUUID(); const now = new Date().toISOString();
+      const student = { id: studentId, name, email, emailApproved: true, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', createdAt: now, updatedAt: now };
       await insert(ctx, 'students', studentId, student);
       const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTERED', studentId, email, emailApproved: true, source: 'ADMIN', timestamp: now });
-      return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: `PIN-${pin}`, status: 'Pending' }, appPin: pin });
+      return res.status(201).json({ student: { id: studentId, name, email, emailApproved: true, standard, coachingType, roomNumber, wingNumber, tabletId: null, pinNumber: maskPin(pin), status: 'Pending' }, appPin: pin });
     } catch (error) { console.error('Student registration failed:', error); return res.status(500).json({ error: 'Student registration could not be completed.' }); }
   });
 
-  // Public registration is a request only. It never authorizes the email or
-  // grants portal access. Admin must approve the request before login works.
   router.post('/request-registration', async (req, res) => {
     if (!ctx.supabaseUrl || !ctx.supabaseKey) return res.status(503).json({ error: 'Service unavailable' });
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -85,9 +78,9 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
     try {
       const students = await rows(ctx, 'students');
       if (students.some((item: any) => same(item?.email, email))) return res.status(409).json({ error: 'This Email ID is already registered or already awaiting approval.' });
-      if (students.some((item: any) => normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
-      const studentId = randomUUID(); const now = new Date().toISOString(); const pinCredentials = createPinCredentials(pin);
-      const student = { id: studentId, name, email, emailApproved: false, ...pinCredentials, pinNumber: `PIN-${pin}`, standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now };
+      if (students.some((item: any) => String(item?.pinLookupHash ?? '') === pinLookupHash(pin, ctx) || normalizePin(item?.pinNumber ?? item?.pin) === pin)) return res.status(409).json({ error: 'This PIN is already registered. Please choose another 4-digit PIN.' });
+      const studentId = randomUUID(); const now = new Date().toISOString();
+      const student = { id: studentId, name, email, emailApproved: false, ...createPinCredentials(pin, ctx), standard, coachingType, isCoachingStudent: coachingType === 'Coaching', roomNumber, wingNumber, assignedTabletId: null, isActive: true, status: 'Pending', registrationRequested: true, createdAt: now, updatedAt: now };
       await insert(ctx, 'students', studentId, student);
       const logId = randomUUID(); await insert(ctx, 'auditLogs', logId, { id: logId, action: 'STUDENT_REGISTRATION_REQUESTED', studentId, email, emailApproved: false, source: 'STUDENT_APP', timestamp: now });
       return res.status(201).json({ ok: true, student: { id: studentId, name, email, emailApproved: false, status: 'Pending' }, message: 'Registration request submitted. Please wait for Admin approval before logging in.' });
@@ -106,10 +99,12 @@ export function createStudentLifecycleRoutes(ctx: Ctx) {
       const [students, sessions, attendance] = await Promise.all([rows(ctx, 'students'), rows(ctx, 'studentSessions'), rows(ctx, 'attendance')]);
       const student = students.find((item: any) => same(item?.email, email) && same(item?.name, name));
       if (!student || !verifyPin(pin, student)) return res.status(401).json({ error: 'Student Name, Email ID or PIN is incorrect.' });
-      if (!student.pinSalt) {
-        const pinCredentials = createPinCredentials(pin);
-        await patch(ctx, 'students', String(student.id), { ...student, ...pinCredentials });
-        Object.assign(student, pinCredentials);
+      if (!student.pinSalt || !student.pinLookupHash || String(student.pinNumber || '').includes(pin)) {
+        const credentials = createPinCredentials(pin, ctx);
+        const migrated = { ...student, ...credentials };
+        delete migrated.pin;
+        await patch(ctx, 'students', String(student.id), migrated);
+        Object.assign(student, migrated);
       }
       if (student.emailApproved !== true) return res.status(403).json({ error: 'Your email ID is not authorized. Please contact the administrator.' });
       if (student.isActive === false || !['approved', 'active', 'present'].includes(String(student?.status ?? '').toLowerCase())) return res.status(401).json({ error: 'Your student account is pending approval or inactive.' });
