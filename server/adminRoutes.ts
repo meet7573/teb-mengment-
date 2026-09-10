@@ -39,6 +39,7 @@ function getSmtpTransporter() {
     host: config.host,
     port: config.port,
     secure: false,
+    family: 4,
     auth: { user: config.user, pass: config.pass }
   });
 }
