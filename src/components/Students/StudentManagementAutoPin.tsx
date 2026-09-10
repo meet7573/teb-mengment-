@@ -19,7 +19,58 @@ export const StudentManagementAutoPin: React.FC<Props> = ({ students, onSaveStud
     event.preventDefault(); setError(''); setSuccessMessage(''); const email = form.email.trim().toLowerCase();
     if (!form.name.trim() || !email || !/^\S+@\S+\.\S+$/.test(email) || !form.roomNumber.trim() || !form.wingNumber.trim()) { setError('Name, valid Email ID, room and wing are required.'); return; }
     if (students.some(s => String(s.email || '').toLowerCase() === email)) { setError('This Email ID is already registered.'); return; }
-    setSaving(true); try { const appPin = generateLocalUniquePin(students); const adminToken = localStorage.getItem('stm_admin_session_token') || ''; const response = await fetch('/api/student/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) }, body: JSON.stringify({ name: form.name.trim(), email, pin: appPin, standard: form.standard, coachingType: form.coachingType, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() }) }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result?.error || `Student creation failed (${response.status}).`); const apiStudent = result?.student; if (!apiStudent?.id) throw new Error('Student was created but the server did not return a student ID.'); const newStudent: Student = { id: String(apiStudent.id), name: String(apiStudent.name || form.name.trim()), email, emailApproved: true, pinNumber: `PIN-${appPin}`, standard: form.standard, isCoachingStudent: form.coachingType === 'Coaching', status: 'Pending', roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim(), assignedTabletId: undefined, createdAt: new Date().toISOString().slice(0, 10) }; onSaveStudents([newStudent, ...students.filter(student => student.id !== newStudent.id)]); setSuccessMessage(`Student added. Email ${email} is pre-approved by Admin. App PIN: ${appPin}. Approve the student, then assign a tablet when available.`); setOpen(false); setEditingStudent(null); } catch (e) { setError(e instanceof Error ? e.message : 'Student creation failed.'); } finally { setSaving(false); }
+    setSaving(true);
+    try {
+      const appPin = generateLocalUniquePin(students);
+      const adminToken = localStorage.getItem('stm_admin_session_token') || '';
+      const response = await fetch('/api/student/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
+        body: JSON.stringify({ name: form.name.trim(), email, pin: appPin, standard: form.standard, coachingType: form.coachingType, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result?.error || `Student creation failed (${response.status}).`);
+      const apiStudent = result?.student;
+      if (!apiStudent?.id) throw new Error('Student was created but the server did not return a student ID.');
+
+      // The register API intentionally does not return the PIN hash. Refresh the
+      // newly-created record from the protected admin DB endpoint before calling
+      // onSaveStudents so the secure server-side credential fields are preserved.
+      const refreshResponse = await fetch(`/api/db/students?_=${Date.now()}`, {
+        headers: { Accept: 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
+        cache: 'no-store'
+      });
+      if (refreshResponse.status === 401) throw new Error('Admin session expired. Please login again.');
+      if (!refreshResponse.ok) throw new Error(`Student was created, but the latest student record could not be loaded (${refreshResponse.status}). Please refresh the page before making another student change.`);
+      const refreshedStudents = await refreshResponse.json().catch(() => null);
+      if (!Array.isArray(refreshedStudents)) throw new Error('Student was created, but the latest student data could not be loaded. Please refresh the page before making another student change.');
+      const serverStudent = refreshedStudents.find((item: any) => String(item?.id ?? '') === String(apiStudent.id));
+      if (!serverStudent) throw new Error('Student was created, but the new student record could not be found after saving. Please refresh the page.');
+
+      // Keep the server-generated credential fields (especially pinHash) while
+      // adding the admin-only display fields that are not stored by registration.
+      const newStudent: Student = {
+        ...serverStudent,
+        id: String(serverStudent.id),
+        name: String(serverStudent.name || apiStudent.name || form.name.trim()),
+        email,
+        emailApproved: true,
+        pinNumber: `PIN-${appPin}`,
+        standard: form.standard,
+        isCoachingStudent: form.coachingType === 'Coaching',
+        status: 'Pending',
+        roomNumber: form.roomNumber.trim(),
+        wingNumber: form.wingNumber.trim(),
+        assignedTabletId: serverStudent.assignedTabletId ?? undefined,
+        createdAt: serverStudent.createdAt || new Date().toISOString().slice(0, 10)
+      } as Student;
+
+      onSaveStudents([newStudent, ...students.filter(student => student.id !== newStudent.id)]);
+      setSuccessMessage(`Student added. Email ${email} is pre-approved by Admin. App PIN: ${appPin}. Approve the student, then assign a tablet when available.`);
+      setOpen(false); setEditingStudent(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Student creation failed.');
+    } finally { setSaving(false); }
   };
   const updateStudent = (event: React.FormEvent) => { event.preventDefault(); setError(''); if (!editingStudent) return; const email = form.email.trim().toLowerCase(); if (!form.name.trim() || !email || !/^\S+@\S+\.\S+$/.test(email) || !form.roomNumber.trim() || !form.wingNumber.trim()) { setError('Name, valid Email ID, room and wing are required.'); return; } if (students.some(s => s.id !== editingStudent.id && String(s.email || '').toLowerCase() === email)) { setError('This Email ID is already registered to another student.'); return; } const updated = students.map(student => student.id === editingStudent.id ? ({ ...student, name: form.name.trim(), email, emailApproved: true, standard: form.standard, isCoachingStudent: form.coachingType === 'Coaching', status: form.status, roomNumber: form.roomNumber.trim(), wingNumber: form.wingNumber.trim() } as Student) : student); onSaveStudents(updated); setSuccessMessage('Student details and approved Email ID updated successfully.'); setOpen(false); setEditingStudent(null); };
   const approveStudent = async (student: Student) => { if (approvingId) return; setApprovingId(student.id); setError(''); try { const token = localStorage.getItem('stm_admin_session_token') || ''; const r = await fetch(`/api/admin/students/${encodeURIComponent(student.id)}/approve`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data?.error || `Approval failed (${r.status}).`); const assignedTabletId = String(data.student?.assignedTabletId ?? data.tablet?.id ?? data.tablet?.tabletId ?? data.tablet?.tabletNumber ?? '') || undefined; const approved = { ...student, ...data.student, emailApproved: true, status: 'Approved' as const, assignedTabletId }; onSaveStudents(students.map(item => item.id === student.id ? approved : item)); setSuccessMessage(data.message || `${student.name} approved successfully. Email ID is authorized. Assign a tablet when one is available.`); } catch (e) { setError(e instanceof Error ? e.message : 'Student approval failed.'); } finally { setApprovingId(''); } };
