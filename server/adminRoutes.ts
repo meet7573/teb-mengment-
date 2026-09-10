@@ -20,7 +20,42 @@ async function patch(ctx: Ctx, collection: string, id: string, data: any) { cons
 function safeEqualHex(a: unknown, b: unknown) { const left = Buffer.from(String(a ?? ''), 'hex'); const right = Buffer.from(String(b ?? ''), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 async function sessionFrom(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token || token.length > 200) return null; const tokenHash = hash(token); const memory = adminSessions.get(token); if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email }; try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && safeEqualHex(x?.tokenHash, tokenHash)); if (!record) return null; adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() }); return { token, email: SUPER_ADMIN_EMAIL }; } catch { return null; } }
 export function requireAdminSession(ctx: Ctx) { return async (req: express.Request, res: express.Response, next: express.NextFunction) => { if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); const session = await sessionFrom(ctx, req); if (!session) return res.status(401).json({ error: 'Admin session required. Please login again.' }); return next(); }; }
-function getSmtpTransporter() { const smtpUrl = String(process.env.SMTP_URL || '').trim(); if (smtpUrl) return nodemailer.createTransport(smtpUrl); const host = String(process.env.SMTP_HOST || '').trim(); const port = Number(process.env.SMTP_PORT || 587); const user = String(process.env.SMTP_USER || '').trim(); const pass = String(process.env.SMTP_PASS || '').trim(); if (!host || !user || !pass) return null; return nodemailer.createTransport({ host, port, secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || port === 465, auth: { user, pass } }); }
+
+function getSmtpConfig() {
+  const host = String(process.env.SMTP_HOST || '').trim();
+  const portValue = String(process.env.SMTP_PORT || '').trim();
+  const user = String(process.env.SMTP_USER || '').trim();
+  const pass = String(process.env.SMTP_PASS || '').trim();
+  if (!host || !portValue || !user || !pass) return null;
+  const port = Number(portValue);
+  if (!Number.isInteger(port) || port <= 0) return null;
+  return { host, port, user, pass };
+}
+
+function getSmtpTransporter() {
+  const config = getSmtpConfig();
+  if (!config) return null;
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: false,
+    auth: { user: config.user, pass: config.pass }
+  });
+}
+
+function smtpConfiguredMessage() {
+  return 'Email service is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS on the server.';
+}
+
+function logMailerError(context: string, error: unknown) {
+  const err = error as { message?: string; code?: string; response?: string };
+  console.error(`${context}:`, {
+    message: err?.message || String(error),
+    code: err?.code || null,
+    response: err?.response || null
+  });
+}
+
 function otpHashMatches(storedHash: unknown, otp: string) { const left = Buffer.from(String(storedHash ?? ''), 'hex'); const right = Buffer.from(hash(otp), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 
 export function createAdminRoutes(ctx: Ctx) {
@@ -42,31 +77,37 @@ export function createAdminRoutes(ctx: Ctx) {
         if (remaining > 0) return res.status(429).json({ error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another OTP.` });
       }
       const transporter = getSmtpTransporter();
-      if (!transporter) return res.status(503).json({ error: 'Email service is not configured. Set SMTP_URL or SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS on the server.' });
+      if (!transporter) return res.status(503).json({ error: smtpConfiguredMessage() });
+      const smtpConfig = getSmtpConfig()!;
       const otp = String(randomInt(0, 1_000_000)).padStart(6, '0');
       const otpId = randomUUID(); const createdAt = new Date().toISOString(); const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS).toISOString();
       await insert(ctx, 'adminOtps', otpId, { id: otpId, username: SUPER_ADMIN_USERNAME, email, otpHash: hash(otp), createdAt, expiresAt, attempts: 0, maxAttempts: MAX_OTP_ATTEMPTS, used: false });
-      await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || SUPER_ADMIN_EMAIL, to: SUPER_ADMIN_EMAIL, subject: 'Tablet Management Admin Login OTP', text: `Your Tablet Management Admin Login OTP is ${otp}. It expires in 5 minutes and can only be used once.`, html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a"><h2>Tablet Management Admin Verification</h2><p>Your one-time verification code is:</p><div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:20px 0">${otp}</div><p>This OTP expires in 5 minutes and can only be used once.</p><p>If you did not request this code, you can safely ignore this email.</p></div>` });
+      try {
+        await transporter.sendMail({ from: smtpConfig.user, to: SUPER_ADMIN_EMAIL, subject: 'Tablet Management Admin Login OTP', text: `Your Tablet Management Admin Login OTP is ${otp}. It expires in 5 minutes and can only be used once.`, html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a"><h2>Tablet Management Admin Verification</h2><p>Your one-time verification code is:</p><div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:20px 0">${otp}</div><p>This OTP expires in 5 minutes and can only be used once.</p><p>If you did not request this code, you can safely ignore this email.</p></div>` });
+      } catch (error) {
+        logMailerError('OTP email send failed', error);
+        return res.status(502).json({ error: 'Failed to send OTP, please try again.' });
+      }
       return res.json({ ok: true, message: 'OTP sent successfully.', expiresInSeconds: 300, resendAfterSeconds: 45 });
-    } catch (e) { console.error('OTP request failed', e); return res.status(500).json({ error: 'Unable to send OTP. Please check the server email configuration.' }); }
+    } catch (e) { console.error('OTP request failed', e); return res.status(500).json({ error: 'OTP request could not be completed. Please try again.' }); }
   });
 
   router.post('/otp/verify', async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
     const otp = String(req.body?.otp || '').replace(/\D/g, '');
-    if (email !== SUPER_ADMIN_EMAIL || !/^\d{6}$/.test(otp)) return res.status(401).json({ error: 'Invalid or expired OTP.' });
+    if (email !== SUPER_ADMIN_EMAIL || !/^\d{6}$/.test(otp)) return res.status(401).json({ error: 'Invalid OTP.' });
     if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' });
     try {
       const records = await rows(ctx, 'adminOtps');
       const record = records.filter((x: any) => String(x?.email || '').toLowerCase() === email && !x?.used).sort((a: any, b: any) => String(b?.createdAt || '').localeCompare(String(a?.createdAt || '')))[0];
-      if (!record) return res.status(401).json({ error: 'Invalid or expired OTP.' });
-      if (new Date(record.expiresAt || 0).getTime() <= Date.now()) return res.status(401).json({ error: 'Invalid or expired OTP.' });
+      if (!record) return res.status(401).json({ error: 'OTP expired.' });
+      if (new Date(record.expiresAt || 0).getTime() <= Date.now()) return res.status(401).json({ error: 'OTP expired.' });
       const attempts = Number(record.attempts || 0);
-      if (attempts >= MAX_OTP_ATTEMPTS) { await patch(ctx, 'adminOtps', String(record.id), { ...record, used: true, invalidatedAt: new Date().toISOString() }); return res.status(401).json({ error: 'Invalid or expired OTP.' }); }
+      if (attempts >= MAX_OTP_ATTEMPTS) { await patch(ctx, 'adminOtps', String(record.id), { ...record, used: true, invalidatedAt: new Date().toISOString() }); return res.status(401).json({ error: 'Invalid OTP.' }); }
       if (!otpHashMatches(record.otpHash, otp)) {
         const nextAttempts = attempts + 1;
         await patch(ctx, 'adminOtps', String(record.id), { ...record, attempts: nextAttempts, used: nextAttempts >= MAX_OTP_ATTEMPTS, invalidatedAt: nextAttempts >= MAX_OTP_ATTEMPTS ? new Date().toISOString() : record.invalidatedAt });
-        return res.status(401).json({ error: 'Invalid or expired OTP.' });
+        return res.status(401).json({ error: 'Invalid OTP.' });
       }
       await patch(ctx, 'adminOtps', String(record.id), { ...record, used: true, verifiedAt: new Date().toISOString() });
       const token = randomUUID(); const tokenHash = hash(token); const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
@@ -74,6 +115,25 @@ export function createAdminRoutes(ctx: Ctx) {
       await insert(ctx, 'adminSessions', tokenHash, { id: tokenHash, tokenHash, username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, expiresAt, createdAt: new Date().toISOString() });
       return res.json({ ok: true, sessionToken: token, user: { id: 'super-admin', fullName: 'Super Admin', username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, role: 'SuperAdmin', status: 'Active' } });
     } catch (e) { console.error('OTP verification failed', e); return res.status(500).json({ error: 'OTP verification failed.' }); }
+  });
+
+  router.get('/test-email', async (req, res) => {
+    const configuredSecret = String(process.env.SMTP_TEST_SECRET || '').trim();
+    const providedSecret = String(req.query.secret || '').trim();
+    const to = String(req.query.to || '').trim().toLowerCase();
+    if (!configuredSecret || providedSecret !== configuredSecret) return res.status(404).json({ error: 'Not found.' });
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'A valid to email address is required.' });
+    const smtpConfig = getSmtpConfig();
+    if (!smtpConfig) return res.status(503).json({ ok: false, error: smtpConfiguredMessage() });
+    try {
+      const transporter = getSmtpTransporter()!;
+      const info = await transporter.sendMail({ from: smtpConfig.user, to, subject: 'Tablet Management SMTP Test', text: 'SMTP test email sent successfully from the Tablet Management Admin server.' });
+      return res.json({ ok: true, message: 'Test email sent successfully.', messageId: info.messageId, accepted: info.accepted, rejected: info.rejected });
+    } catch (error) {
+      logMailerError('SMTP test email failed', error);
+      const err = error as { message?: string; code?: string; response?: string };
+      return res.status(502).json({ ok: false, error: err?.message || String(error), code: err?.code || null, response: err?.response || null });
+    }
   });
 
   // Direct credential-only login is intentionally disabled. OTP verification is now required.
