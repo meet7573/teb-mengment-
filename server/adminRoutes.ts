@@ -1,9 +1,15 @@
 import express from 'express';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import nodemailer from 'nodemailer';
 
 type Ctx = { supabaseUrl?: string; supabaseKey?: string };
 const SUPER_ADMIN_USERNAME = 'superadmin';
 const SUPER_ADMIN_EMAIL = 'meetdevani2003@gmail.com';
+const OTP_EXPIRY_MS = 5 * 60_000;
+const OTP_RESEND_COOLDOWN_MS = 45_000;
+const OTP_REQUEST_WINDOW_MS = 10 * 60_000;
+const MAX_OTP_REQUESTS = 3;
+const MAX_OTP_ATTEMPTS = 5;
 const adminSessions = new Map<string, { email: string; expiresAt: number }>();
 function hash(value: string) { return createHash('sha256').update(value).digest('hex'); }
 function configured(ctx: Ctx) { return Boolean(ctx.supabaseUrl && ctx.supabaseKey); }
@@ -14,10 +20,64 @@ async function patch(ctx: Ctx, collection: string, id: string, data: any) { cons
 function safeEqualHex(a: unknown, b: unknown) { const left = Buffer.from(String(a ?? ''), 'hex'); const right = Buffer.from(String(b ?? ''), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 async function sessionFrom(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token || token.length > 200) return null; const tokenHash = hash(token); const memory = adminSessions.get(token); if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email }; try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && safeEqualHex(x?.tokenHash, tokenHash)); if (!record) return null; adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() }); return { token, email: SUPER_ADMIN_EMAIL }; } catch { return null; } }
 export function requireAdminSession(ctx: Ctx) { return async (req: express.Request, res: express.Response, next: express.NextFunction) => { if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); const session = await sessionFrom(ctx, req); if (!session) return res.status(401).json({ error: 'Admin session required. Please login again.' }); return next(); }; }
+function getSmtpTransporter() { const smtpUrl = String(process.env.SMTP_URL || '').trim(); if (smtpUrl) return nodemailer.createTransport(smtpUrl); const host = String(process.env.SMTP_HOST || '').trim(); const port = Number(process.env.SMTP_PORT || 587); const user = String(process.env.SMTP_USER || '').trim(); const pass = String(process.env.SMTP_PASS || '').trim(); if (!host || !user || !pass) return null; return nodemailer.createTransport({ host, port, secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || port === 465, auth: { user, pass } }); }
+function otpHashMatches(storedHash: unknown, otp: string) { const left = Buffer.from(String(storedHash ?? ''), 'hex'); const right = Buffer.from(hash(otp), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 
 export function createAdminRoutes(ctx: Ctx) {
   const router = express.Router();
-  router.post('/login', async (req, res) => { const username = String(req.body?.username || '').trim().toLowerCase(); const email = String(req.body?.email || '').trim().toLowerCase(); if (username !== SUPER_ADMIN_USERNAME || email !== SUPER_ADMIN_EMAIL) return res.status(403).json({ error: 'The user name or email ID is not authorized to access the Admin Dashboard.' }); if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); try { const token = randomUUID(); const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString(); adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: Date.now() + 8 * 60 * 60_000 }); await insert(ctx, 'adminSessions', hash(token), { id: hash(token), tokenHash: hash(token), username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, expiresAt, createdAt: new Date().toISOString() }); return res.json({ ok: true, sessionToken: token, user: { id: 'super-admin', fullName: 'Super Admin', username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, role: 'SuperAdmin', status: 'Active' } }); } catch { return res.status(500).json({ error: 'Admin login failed.' }); } });
+
+  router.post('/otp/request', async (req, res) => {
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (username !== SUPER_ADMIN_USERNAME) return res.status(403).json({ error: 'The user name is not authorized to access the Admin Dashboard.' });
+    if (email !== SUPER_ADMIN_EMAIL) return res.status(403).json({ error: 'The email ID is not authorized to access the Admin Dashboard.' });
+    if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' });
+    try {
+      const records = await rows(ctx, 'adminOtps');
+      const recent = records.filter((record: any) => String(record?.email || '').toLowerCase() === email && Number(new Date(record?.createdAt || 0)) > Date.now() - OTP_REQUEST_WINDOW_MS);
+      if (recent.length >= MAX_OTP_REQUESTS) return res.status(429).json({ error: 'Too many OTP requests. Please try again later.' });
+      const latest = recent.sort((a: any, b: any) => String(b?.createdAt || '').localeCompare(String(a?.createdAt || '')))[0];
+      if (latest) {
+        const remaining = OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(latest.createdAt).getTime());
+        if (remaining > 0) return res.status(429).json({ error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another OTP.` });
+      }
+      const transporter = getSmtpTransporter();
+      if (!transporter) return res.status(503).json({ error: 'Email service is not configured. Set SMTP_URL or SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS on the server.' });
+      const otp = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      const otpId = randomUUID(); const createdAt = new Date().toISOString(); const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS).toISOString();
+      await insert(ctx, 'adminOtps', otpId, { id: otpId, username: SUPER_ADMIN_USERNAME, email, otpHash: hash(otp), createdAt, expiresAt, attempts: 0, maxAttempts: MAX_OTP_ATTEMPTS, used: false });
+      await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || SUPER_ADMIN_EMAIL, to: SUPER_ADMIN_EMAIL, subject: 'Tablet Management Admin Login OTP', text: `Your Tablet Management Admin Login OTP is ${otp}. It expires in 5 minutes and can only be used once.`, html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a"><h2>Tablet Management Admin Verification</h2><p>Your one-time verification code is:</p><div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:20px 0">${otp}</div><p>This OTP expires in 5 minutes and can only be used once.</p><p>If you did not request this code, you can safely ignore this email.</p></div>` });
+      return res.json({ ok: true, message: 'OTP sent successfully.', expiresInSeconds: 300, resendAfterSeconds: 45 });
+    } catch (e) { console.error('OTP request failed', e); return res.status(500).json({ error: 'Unable to send OTP. Please check the server email configuration.' }); }
+  });
+
+  router.post('/otp/verify', async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const otp = String(req.body?.otp || '').replace(/\D/g, '');
+    if (email !== SUPER_ADMIN_EMAIL || !/^\d{6}$/.test(otp)) return res.status(401).json({ error: 'Invalid or expired OTP.' });
+    if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' });
+    try {
+      const records = await rows(ctx, 'adminOtps');
+      const record = records.filter((x: any) => String(x?.email || '').toLowerCase() === email && !x?.used).sort((a: any, b: any) => String(b?.createdAt || '').localeCompare(String(a?.createdAt || '')))[0];
+      if (!record) return res.status(401).json({ error: 'Invalid or expired OTP.' });
+      if (new Date(record.expiresAt || 0).getTime() <= Date.now()) return res.status(401).json({ error: 'Invalid or expired OTP.' });
+      const attempts = Number(record.attempts || 0);
+      if (attempts >= MAX_OTP_ATTEMPTS) { await patch(ctx, 'adminOtps', String(record.id), { ...record, used: true, invalidatedAt: new Date().toISOString() }); return res.status(401).json({ error: 'Invalid or expired OTP.' }); }
+      if (!otpHashMatches(record.otpHash, otp)) {
+        const nextAttempts = attempts + 1;
+        await patch(ctx, 'adminOtps', String(record.id), { ...record, attempts: nextAttempts, used: nextAttempts >= MAX_OTP_ATTEMPTS, invalidatedAt: nextAttempts >= MAX_OTP_ATTEMPTS ? new Date().toISOString() : record.invalidatedAt });
+        return res.status(401).json({ error: 'Invalid or expired OTP.' });
+      }
+      await patch(ctx, 'adminOtps', String(record.id), { ...record, used: true, verifiedAt: new Date().toISOString() });
+      const token = randomUUID(); const tokenHash = hash(token); const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
+      adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: Date.now() + 8 * 60 * 60_000 });
+      await insert(ctx, 'adminSessions', tokenHash, { id: tokenHash, tokenHash, username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, expiresAt, createdAt: new Date().toISOString() });
+      return res.json({ ok: true, sessionToken: token, user: { id: 'super-admin', fullName: 'Super Admin', username: SUPER_ADMIN_USERNAME, email: SUPER_ADMIN_EMAIL, role: 'SuperAdmin', status: 'Active' } });
+    } catch (e) { console.error('OTP verification failed', e); return res.status(500).json({ error: 'OTP verification failed.' }); }
+  });
+
+  // Direct credential-only login is intentionally disabled. OTP verification is now required.
+  router.post('/login', async (_req, res) => res.status(410).json({ error: 'Direct admin login is disabled. Request and verify an OTP first.' }));
   router.post('/logout', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (token) { adminSessions.delete(token); const tokenHash = hash(token); try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && safeEqualHex(x?.tokenHash, tokenHash)); if (record) await patch(ctx, 'adminSessions', tokenHash, { ...record, revokedAt: new Date().toISOString(), expiresAt: new Date(0).toISOString() }); } catch {} } return res.json({ ok: true }); });
   router.get('/students/pending', requireAdminSession(ctx), async (_req, res) => { try { return res.json({ students: (await rows(ctx, 'students')).filter((s: any) => String(s?.status || '').toLowerCase() === 'pending') }); } catch { return res.status(500).json({ error: 'Could not load pending students.' }); } });
   router.post('/students/:id/approve', requireAdminSession(ctx), async (req, res) => {
