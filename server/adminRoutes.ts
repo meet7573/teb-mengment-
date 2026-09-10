@@ -1,6 +1,5 @@
 import express from 'express';
 import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import nodemailer from 'nodemailer';
 
 type Ctx = { supabaseUrl?: string; supabaseKey?: string };
 const SUPER_ADMIN_USERNAME = 'superadmin';
@@ -21,31 +20,33 @@ function safeEqualHex(a: unknown, b: unknown) { const left = Buffer.from(String(
 async function sessionFrom(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token || token.length > 200) return null; const tokenHash = hash(token); const memory = adminSessions.get(token); if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email }; try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && safeEqualHex(x?.tokenHash, tokenHash)); if (!record) return null; adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() }); return { token, email: SUPER_ADMIN_EMAIL }; } catch { return null; } }
 export function requireAdminSession(ctx: Ctx) { return async (req: express.Request, res: express.Response, next: express.NextFunction) => { if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); const session = await sessionFrom(ctx, req); if (!session) return res.status(401).json({ error: 'Admin session required. Please login again.' }); return next(); }; }
 
-function getSmtpConfig() {
-  const host = String(process.env.SMTP_HOST || '').trim();
-  const portValue = String(process.env.SMTP_PORT || '').trim();
-  const user = String(process.env.SMTP_USER || '').trim();
-  const pass = String(process.env.SMTP_PASS || '').trim();
-  if (!host || !portValue || !user || !pass) return null;
-  const port = Number(portValue);
-  if (!Number.isInteger(port) || port <= 0) return null;
-  return { host, port, user, pass };
+function getEmailApiConfig() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.RESEND_FROM_EMAIL || '').trim() || 'onboarding@resend.dev';
+  if (!apiKey) return null;
+  return { apiKey, from };
 }
 
-function getSmtpTransporter() {
-  const config = getSmtpConfig();
-  if (!config) return null;
-  return nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: false,
-    family: 4,
-    auth: { user: config.user, pass: config.pass }
+async function sendEmail(to: string, subject: string, text: string, html: string) {
+  const config = getEmailApiConfig();
+  if (!config) throw new Error('RESEND_API_KEY is not configured');
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: config.from, to: [to], subject, text, html })
   });
+  const bodyText = await response.text();
+  if (!response.ok) {
+    const error = new Error(`Resend email API failed: ${response.status} ${bodyText}`) as Error & { code?: string; response?: string };
+    error.code = `HTTP_${response.status}`;
+    error.response = bodyText;
+    throw error;
+  }
+  return bodyText;
 }
 
-function smtpConfiguredMessage() {
-  return 'Email service is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS on the server.';
+function emailConfiguredMessage() {
+  return 'Email service is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL on the server.';
 }
 
 function logMailerError(context: string, error: unknown) {
@@ -77,14 +78,13 @@ export function createAdminRoutes(ctx: Ctx) {
         const remaining = OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(latest.createdAt).getTime());
         if (remaining > 0) return res.status(429).json({ error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another OTP.` });
       }
-      const transporter = getSmtpTransporter();
-      if (!transporter) return res.status(503).json({ error: smtpConfiguredMessage() });
-      const smtpConfig = getSmtpConfig()!;
+      const emailConfig = getEmailApiConfig();
+      if (!emailConfig) return res.status(503).json({ error: emailConfiguredMessage() });
       const otp = String(randomInt(0, 1_000_000)).padStart(6, '0');
       const otpId = randomUUID(); const createdAt = new Date().toISOString(); const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS).toISOString();
       await insert(ctx, 'adminOtps', otpId, { id: otpId, username: SUPER_ADMIN_USERNAME, email, otpHash: hash(otp), createdAt, expiresAt, attempts: 0, maxAttempts: MAX_OTP_ATTEMPTS, used: false });
       try {
-        await transporter.sendMail({ from: smtpConfig.user, to: SUPER_ADMIN_EMAIL, subject: 'Tablet Management Admin Login OTP', text: `Your Tablet Management Admin Login OTP is ${otp}. It expires in 5 minutes and can only be used once.`, html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a"><h2>Tablet Management Admin Verification</h2><p>Your one-time verification code is:</p><div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:20px 0">${otp}</div><p>This OTP expires in 5 minutes and can only be used once.</p><p>If you did not request this code, you can safely ignore this email.</p></div>` });
+        await sendEmail(SUPER_ADMIN_EMAIL, 'Tablet Management Admin Login OTP', `Your Tablet Management Admin Login OTP is ${otp}. It expires in 5 minutes and can only be used once.`, `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a"><h2>Tablet Management Admin Verification</h2><p>Your one-time verification code is:</p><div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:20px 0">${otp}</div><p>This OTP expires in 5 minutes and can only be used once.</p><p>If you did not request this code, you can safely ignore this email.</p></div>`);
       } catch (error) {
         logMailerError('OTP email send failed', error);
         return res.status(502).json({ error: 'Failed to send OTP, please try again.' });
@@ -119,19 +119,17 @@ export function createAdminRoutes(ctx: Ctx) {
   });
 
   router.get('/test-email', async (req, res) => {
-    const configuredSecret = String(process.env.SMTP_TEST_SECRET || '').trim();
+    const configuredSecret = String(process.env.EMAIL_TEST_SECRET || '').trim();
     const providedSecret = String(req.query.secret || '').trim();
     const to = String(req.query.to || '').trim().toLowerCase();
     if (!configuredSecret || providedSecret !== configuredSecret) return res.status(404).json({ error: 'Not found.' });
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'A valid to email address is required.' });
-    const smtpConfig = getSmtpConfig();
-    if (!smtpConfig) return res.status(503).json({ ok: false, error: smtpConfiguredMessage() });
+    if (!getEmailApiConfig()) return res.status(503).json({ ok: false, error: emailConfiguredMessage() });
     try {
-      const transporter = getSmtpTransporter()!;
-      const info = await transporter.sendMail({ from: smtpConfig.user, to, subject: 'Tablet Management SMTP Test', text: 'SMTP test email sent successfully from the Tablet Management Admin server.' });
-      return res.json({ ok: true, message: 'Test email sent successfully.', messageId: info.messageId, accepted: info.accepted, rejected: info.rejected });
+      await sendEmail(to, 'Tablet Management Email Test', 'Email API test email sent successfully from the Tablet Management Admin server.', '<p>Email API test email sent successfully from the Tablet Management Admin server.</p>');
+      return res.json({ ok: true, message: 'Test email sent successfully.' });
     } catch (error) {
-      logMailerError('SMTP test email failed', error);
+      logMailerError('Email API test failed', error);
       const err = error as { message?: string; code?: string; response?: string };
       return res.status(502).json({ ok: false, error: err?.message || String(error), code: err?.code || null, response: err?.response || null });
     }
