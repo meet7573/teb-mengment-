@@ -16,6 +16,7 @@ async function db(ctx: Ctx, pathname: string, options: RequestInit = {}) { if (!
 async function rows(ctx: Ctx, collection: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&select=data&order=updated_at.asc`); if (!r.ok) throw new Error(`Read ${collection} failed: ${r.status}`); return (await r.json()).map((x: any) => x.data); }
 async function insert(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, 'app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data }) }); if (!r.ok) throw new Error(`Insert ${collection} failed: ${r.status} ${await r.text()}`); }
 async function patch(ctx: Ctx, collection: string, id: string, data: any) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data, updated_at: new Date().toISOString() }) }); if (!r.ok) throw new Error(`Update ${collection} failed: ${r.status} ${await r.text()}`); }
+async function remove(ctx: Ctx, collection: string, id: string) { const r = await db(ctx, `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }); if (!r.ok) throw new Error(`Delete ${collection} failed: ${r.status} ${await r.text()}`); }
 function safeEqualHex(a: unknown, b: unknown) { const left = Buffer.from(String(a ?? ''), 'hex'); const right = Buffer.from(String(b ?? ''), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
 async function sessionFrom(ctx: Ctx, req: express.Request) { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (!token || token.length > 200) return null; const tokenHash = hash(token); const memory = adminSessions.get(token); if (memory && memory.expiresAt > Date.now() && memory.email === SUPER_ADMIN_EMAIL) return { token, email: memory.email }; try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && String(x?.email || '').toLowerCase() === SUPER_ADMIN_EMAIL && !x?.revokedAt && new Date(x?.expiresAt || 0).getTime() > Date.now() && safeEqualHex(x?.tokenHash, tokenHash)); if (!record) return null; adminSessions.set(token, { email: SUPER_ADMIN_EMAIL, expiresAt: new Date(record.expiresAt).getTime() }); return { token, email: SUPER_ADMIN_EMAIL }; } catch { return null; } }
 export function requireAdminSession(ctx: Ctx) { return async (req: express.Request, res: express.Response, next: express.NextFunction) => { if (!configured(ctx)) return res.status(503).json({ error: 'Admin authentication service is not configured.' }); const session = await sessionFrom(ctx, req); if (!session) return res.status(401).json({ error: 'Admin session required. Please login again.' }); return next(); }; }
@@ -59,6 +60,9 @@ function logMailerError(context: string, error: unknown) {
 }
 
 function otpHashMatches(storedHash: unknown, otp: string) { const left = Buffer.from(String(storedHash ?? ''), 'hex'); const right = Buffer.from(hash(otp), 'hex'); return left.length > 0 && left.length === right.length && timingSafeEqual(left, right); }
+function oneMonthAgo() { const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 1); return cutoff; }
+function sessionTime(session: any) { return new Date(session?.returnedAt || session?.startedAt || 0).getTime(); }
+function isOldReturnedSession(session: any, cutoffMs: number) { return String(session?.status || '').toLowerCase() === 'returned' && sessionTime(session) > 0 && sessionTime(session) < cutoffMs; }
 
 export function createAdminRoutes(ctx: Ctx) {
   const router = express.Router();
@@ -135,7 +139,6 @@ export function createAdminRoutes(ctx: Ctx) {
     }
   });
 
-  // Direct credential-only login is intentionally disabled. OTP verification is now required.
   router.post('/login', async (_req, res) => res.status(410).json({ error: 'Direct admin login is disabled. Request and verify an OTP first.' }));
   router.post('/logout', async (req, res) => { const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim(); if (token) { adminSessions.delete(token); const tokenHash = hash(token); try { const records = await rows(ctx, 'adminSessions'); const record = records.find((x: any) => String(x?.id) === tokenHash && safeEqualHex(x?.tokenHash, tokenHash)); if (record) await patch(ctx, 'adminSessions', tokenHash, { ...record, revokedAt: new Date().toISOString(), expiresAt: new Date(0).toISOString() }); } catch {} } return res.json({ ok: true }); });
   router.get('/students/pending', requireAdminSession(ctx), async (_req, res) => { try { return res.json({ students: (await rows(ctx, 'students')).filter((s: any) => String(s?.status || '').toLowerCase() === 'pending') }); } catch { return res.status(500).json({ error: 'Could not load pending students.' }); } });
@@ -157,6 +160,51 @@ export function createAdminRoutes(ctx: Ctx) {
       return res.json({ ok: true, student: approved, tablet: null, message: assignedTabletId ? 'Student approved and existing tablet assignment retained.' : 'Student approved successfully. Assign an available tablet when ready.' });
     } catch (e) { console.error('Approval failed', e); return res.status(500).json({ error: 'Student approval failed.' }); }
   });
+
+  router.get('/tablet-usage', requireAdminSession(ctx), async (_req, res) => {
+    try {
+      const sessions = await rows(ctx, 'studentSessions');
+      const usage = sessions
+        .filter((session: any) => ['active', 'returned'].includes(String(session?.status || '').toLowerCase()))
+        .map((session: any) => {
+          const startedMs = new Date(session?.startedAt || 0).getTime();
+          const returnedMs = session?.returnedAt ? new Date(session.returnedAt).getTime() : 0;
+          const computedDuration = returnedMs > 0 && startedMs > 0 ? Math.max(0, Math.round((returnedMs - startedMs) / 60000)) : null;
+          return { ...session, durationMinutes: session?.durationMinutes ?? computedDuration, status: String(session?.status || '').toLowerCase() === 'active' ? 'active' : 'returned' };
+        })
+        .sort((a: any, b: any) => new Date(b?.startedAt || 0).getTime() - new Date(a?.startedAt || 0).getTime());
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      return res.json({ sessions: usage });
+    } catch (e) { console.error('Tablet usage load failed', e); return res.status(500).json({ error: 'Could not load tablet usage.' }); }
+  });
+
+  router.get('/tablet-usage/retention', requireAdminSession(ctx), async (_req, res) => {
+    try {
+      const cutoff = oneMonthAgo();
+      const sessions = await rows(ctx, 'studentSessions');
+      const eligible = sessions.filter((session: any) => isOldReturnedSession(session, cutoff.getTime()));
+      const oldest = eligible.reduce((value: number, session: any) => Math.min(value, sessionTime(session)), Number.POSITIVE_INFINITY);
+      return res.json({ eligibleCount: eligible.length, cutoffAt: cutoff.toISOString(), oldestAt: Number.isFinite(oldest) ? new Date(oldest).toISOString() : null });
+    } catch (e) { console.error('Tablet usage retention check failed', e); return res.status(500).json({ error: 'Could not check tablet usage retention.' }); }
+  });
+
+  router.delete('/tablet-usage/history', requireAdminSession(ctx), async (_req, res) => {
+    try {
+      const cutoff = oneMonthAgo();
+      const sessions = await rows(ctx, 'studentSessions');
+      const eligible = sessions.filter((session: any) => isOldReturnedSession(session, cutoff.getTime()));
+      if (!eligible.length) return res.json({ ok: true, deletedCount: 0, message: 'No tablet usage history older than one month was found.' });
+      const sessionIds = new Set(eligible.map((session: any) => String(session?.id)).filter(Boolean));
+      const [attendance, checkoutRequests] = await Promise.all([rows(ctx, 'attendance'), rows(ctx, 'checkoutRequests')]);
+      const attendanceIds = attendance.filter((row: any) => sessionIds.has(String(row?.sessionId))).map((row: any) => String(row?.id)).filter(Boolean);
+      const checkoutIds = checkoutRequests.filter((row: any) => sessionIds.has(String(row?.sessionId))).map((row: any) => String(row?.id)).filter(Boolean);
+      for (const id of sessionIds) await remove(ctx, 'studentSessions', id);
+      for (const id of attendanceIds) await remove(ctx, 'attendance', id);
+      for (const id of checkoutIds) await remove(ctx, 'checkoutRequests', id);
+      return res.json({ ok: true, deletedCount: eligible.length, deletedAttendanceCount: attendanceIds.length, deletedCheckoutRequestCount: checkoutIds.length, cutoffAt: cutoff.toISOString(), message: `${eligible.length} old tablet usage record${eligible.length === 1 ? '' : 's'} deleted.` });
+    } catch (e) { console.error('Tablet usage history cleanup failed', e); return res.status(500).json({ error: 'Could not delete old tablet usage history.' }); }
+  });
+
   router.get('/checkout-requests', requireAdminSession(ctx), async (_req, res) => { try { const all = await rows(ctx, 'checkoutRequests'); const requests = all.filter((x: any) => String(x?.status || '').trim().toLowerCase() === 'pending').sort((a: any, b: any) => String(b?.requestedAt || '').localeCompare(String(a?.requestedAt || ''))); res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); return res.json({ requests, count: requests.length }); } catch { return res.status(500).json({ error: 'Could not load checkout requests.' }); } });
   router.post('/checkout-requests/:id/decision', requireAdminSession(ctx), async (req, res) => { const id = String(req.params.id); const decision = String(req.body?.decision || '').toLowerCase(); if (!['approved','rejected'].includes(decision)) return res.status(400).json({ error: 'Decision must be approved or rejected.' }); try { const requests = await rows(ctx, 'checkoutRequests'); const request = requests.find((x: any) => String(x?.id) === id); if (!request || String(request.status || '').toLowerCase() !== 'pending') return res.status(404).json({ error: 'Pending checkout request not found.' }); if (decision === 'rejected') { const updated = { ...request, status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updated); return res.json({ ok: true, request: updated }); } const sessions = await rows(ctx, 'studentSessions'); const session = sessions.find((x: any) => x?.status === 'active' && String(x.studentId) === String(request.studentId)); if (!session) return res.status(409).json({ error: 'Active student session not found.' }); const returnedAt = new Date().toISOString(); const durationMinutes = Math.max(0, Math.round((new Date(returnedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)); await patch(ctx, 'studentSessions', String(session.id), { ...session, returnedAt, durationMinutes, status: 'returned', checkoutApprovedAt: returnedAt, checkoutApprovedBy: SUPER_ADMIN_EMAIL }); const attendanceRows = await rows(ctx, 'attendance'); const existingAttendance = attendanceRows.find((x: any) => String(x?.sessionId) === String(session.id) && String(x?.studentId) === String(session.studentId)); if (existingAttendance) await patch(ctx, 'attendance', String(existingAttendance.id), { ...existingAttendance, returnedAt, durationMinutes, status: 'OUT' }); else { const attendanceId = randomUUID(); await insert(ctx, 'attendance', attendanceId, { id: attendanceId, sessionId: session.id, studentId: session.studentId, studentName: session.studentName, tabletId: session.tabletId, startedAt: session.startedAt, returnedAt, durationMinutes, status: 'OUT', date: returnedAt.slice(0,10) }); } const tablets = await rows(ctx, 'tablets'); const tablet = tablets.find((t: any) => String(t?.id ?? t?.tabletId ?? t?.tabletNumber) === String(session.tabletId)); if (tablet) await patch(ctx, 'tablets', String(tablet.id ?? tablet.tabletId ?? tablet.tabletNumber), { ...tablet, status: 'Available', assignedStudentId: null, assignedStudentName: null, assignedToStudentId: null, assignedToStudentName: null }); const students = await rows(ctx, 'students'); const student = students.find((s: any) => String(s?.id) === String(session.studentId)); if (student) await patch(ctx, 'students', String(student.id), { ...student, assignedTabletId: null, status: 'Approved' }); const updatedRequest = { ...request, status: 'approved', decidedAt: returnedAt, decidedBy: SUPER_ADMIN_EMAIL }; await patch(ctx, 'checkoutRequests', id, updatedRequest); return res.json({ ok: true, request: updatedRequest }); } catch (e) { console.error('Checkout decision failed', e); return res.status(500).json({ error: 'Checkout decision failed.' }); } });
   return router;
