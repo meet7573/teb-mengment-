@@ -1,7 +1,7 @@
 import { Student, Tablet, TabletBox, TabletAssignment, DailyAttendanceRecord, AttendanceDetail, AttendanceStatus, AuditLog, TabletMovement } from '../types';
 
 const listeners: Record<string, Set<(data: any[]) => void>> = {};
-const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions'];
+const collections = ['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'movementEvents', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions'];
 
 function adminHeaders(extra: Record<string, string> = {}) {
   const token = localStorage.getItem('stm_admin_session_token') || '';
@@ -113,30 +113,12 @@ export function subscribeToCollection<T>(collectionName: string, callback: (data
     catch (error) { console.error(`Failed to refresh ${collectionName} from the database`, error); if (!stopped && getLocalData(collectionName).length === 0 && import.meta.env.PROD) callback([]); }
     finally { refreshing = false; }
   };
-  // Load once when the component subscribes.
   void refresh();
-
-  // Refresh while the tab is visible so concurrent admin edits propagate
-  // without requiring a focus/visibility change. Pause automatically while
-  // hidden to avoid unnecessary requests.
-  const pollInterval = window.setInterval(() => {
-    if (document.visibilityState === 'visible') void refresh();
-  }, 20_000);
-
-  // Keep the existing focus/visibility-triggered refresh as an additive path.
-  const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') void refresh();
-  };
+  const pollInterval = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 20_000);
+  const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh(); };
   window.addEventListener('focus', refresh);
   document.addEventListener('visibilitychange', onVisibilityChange);
-
-  return () => {
-    stopped = true;
-    window.removeEventListener('focus', refresh);
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-    window.clearInterval(pollInterval);
-    listeners[collectionName]?.delete(callback);
-  };
+  return () => { stopped = true; window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVisibilityChange); window.clearInterval(pollInterval); listeners[collectionName]?.delete(callback); };
 }
 
 export async function syncCollection<T extends { id: string }>(collectionName: string, current: T[], updated: T[]) {
@@ -144,98 +126,42 @@ export async function syncCollection<T extends { id: string }>(collectionName: s
   const normalizedUpdated = normalizeCollectionData(collectionName, Array.isArray(updated) ? updated : []) as T[];
   const currentById = new Map(normalizedCurrent.map((item) => [String(item.id), item]));
   const updatedById = new Map(normalizedUpdated.map((item) => [String(item.id), item]));
-
-  // Persist only changed/new records. This preserves unrelated concurrent
-  // edits because a stale browser never sends the rest of its old collection.
-  const changedRecords = normalizedUpdated.filter((item) => {
-    const id = String(item.id ?? '').trim();
-    if (!id) return false;
-    const previous = currentById.get(id);
-    return !previous || JSON.stringify(previous) !== JSON.stringify(item);
-  });
-
-  // Deletions are also targeted. This preserves the old caller contract where
-  // callers submit the resulting array, without requiring a whole-collection
-  // replacement on the server.
+  const changedRecords = normalizedUpdated.filter((item) => { const id = String(item.id ?? '').trim(); if (!id) return false; const previous = currentById.get(id); return !previous || JSON.stringify(previous) !== JSON.stringify(item); });
   const deletedIds = [...currentById.keys()].filter((id) => !updatedById.has(id));
-
   if (changedRecords.length > 0) {
     const response = await fetch(`/api/db/${collectionName}`, { method: 'PUT', headers: adminHeaders(), body: JSON.stringify(changedRecords) });
     if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
     if (!response.ok) { if (!import.meta.env.PROD) { setLocalData(collectionName, normalizedUpdated); return; } throw new Error(`Database save failed: ${response.status}`); }
   }
-
   if (deletedIds.length > 0) {
-    const deleteResults = await Promise.all(deletedIds.map((id) =>
-      fetch(`/api/db/${encodeURIComponent(collectionName)}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: adminHeaders() })
-    ));
-    for (const response of deleteResults) {
-      if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
-      if (!response.ok && import.meta.env.PROD) throw new Error(`Database delete failed: ${response.status}`);
-    }
+    const deleteResults = await Promise.all(deletedIds.map((id) => fetch(`/api/db/${encodeURIComponent(collectionName)}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: adminHeaders() })));
+    for (const response of deleteResults) { if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); } if (!response.ok && import.meta.env.PROD) throw new Error(`Database delete failed: ${response.status}`); }
   }
-
   setLocalData(collectionName, normalizedUpdated);
 }
 
-/**
- * Delete one student using the same full-collection PUT contract as all other
- * student saves. The old implementation sent only the deleted row, which could
- * overwrite the students collection and race with a second save.
- */
 export async function deleteStudent(student: Student, currentStudents?: Student[]) {
   const id = String(student?.id ?? '').trim();
   if (!id) throw new Error('Student ID is required.');
-
-  // Use the dedicated server delete API. A collection PUT is an UPSERT and
-  // cannot remove rows that are simply omitted from the submitted array.
-  const response = await fetch(`/api/student/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: adminHeaders()
-  });
-
-  if (response.status === 401) {
-    localStorage.removeItem('stm_admin_session_token');
-    notifyAdminSessionExpired();
-    throw new Error('Admin session expired. Please login again.');
-  }
-
+  const response = await fetch(`/api/student/${encodeURIComponent(id)}`, { method: 'DELETE', headers: adminHeaders() });
+  if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result?.error || `Student delete failed: ${response.status}`);
-  }
-
-  const source = Array.isArray(currentStudents) && currentStudents.length
-    ? currentStudents
-    : getLocalData('students');
+  if (!response.ok) throw new Error(result?.error || `Student delete failed: ${response.status}`);
+  const source = Array.isArray(currentStudents) && currentStudents.length ? currentStudents : getLocalData('students');
   const remaining = source.filter((item) => String(item?.id ?? '') !== id);
-  // Immediately notify every mounted subscriber (App state included), so an
-  // old in-memory students array cannot render the deleted record again.
   setLocalData('students', normalizeCollectionData('students', remaining));
   notifyListeners('students', normalizeCollectionData('students', remaining));
 }
-
 
 export async function deleteCollectionRecord(collectionName: string, id: string) {
   const collection = String(collectionName ?? '').trim();
   const recordId = String(id ?? '').trim();
   if (!collection || !recordId) throw new Error('Collection name and record ID are required.');
-
-  const response = await fetch(
-    `/api/db/${encodeURIComponent(collection)}/${encodeURIComponent(recordId)}`,
-    { method: 'DELETE', headers: adminHeaders() }
-  );
-
-  if (response.status === 401) {
-    localStorage.removeItem('stm_admin_session_token');
-    notifyAdminSessionExpired();
-    throw new Error('Admin session expired. Please login again.');
-  }
-
+  const response = await fetch(`/api/db/${encodeURIComponent(collection)}/${encodeURIComponent(recordId)}`, { method: 'DELETE', headers: adminHeaders() });
+  if (response.status === 401) { localStorage.removeItem('stm_admin_session_token'); notifyAdminSessionExpired(); throw new Error('Admin session expired. Please login again.'); }
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result?.error || `Delete failed: ${response.status}`);
 }
-
 
 export async function resetPersistentDatabase() {
   const response = await fetch('/api/db', { method: 'DELETE', headers: adminHeaders() });
