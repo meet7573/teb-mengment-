@@ -11,7 +11,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 
-const COLLECTIONS = new Set(['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions']);
+const COLLECTIONS = new Set(['students', 'tablets', 'boxes', 'assignments', 'attendance', 'movements', 'movementEvents', 'auditLogs', 'studentSessions', 'checkoutRequests', 'adminOtps', 'adminSessions']);
 const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 function databaseConfigured() { return Boolean(supabaseUrl && supabaseKey); }
@@ -55,25 +55,13 @@ function activationAllowed(ip: string) { const now = Date.now(); const current =
 
 app.get('/api/health', async (_req, res) => { try { if (!databaseConfigured()) return res.json({ status: 'ok', database: false, provider: 'supabase' }); const response = await supabaseRequest('app_data?select=id&limit=1'); if (!response.ok) throw new Error(`Supabase returned ${response.status}`); return res.json({ status: 'ok', database: true, provider: 'supabase' }); } catch (error) { console.error('Database health check failed:', error); return res.status(503).json({ status: 'error', database: false, provider: 'supabase' }); } });
 
-// Secure full database reset. This intentionally clears only application data
-// stored in app_data; it does not alter the Supabase schema.
 app.delete('/api/db', requireAdminSession({ supabaseUrl, supabaseKey }), async (_req, res) => {
   if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
   try {
-    const response = await supabaseRequest('app_data?collection=not.is.null', {
-      method: 'DELETE',
-      headers: { Prefer: 'return=minimal' }
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      console.error('Database reset failed:', response.status, body);
-      return res.status(500).json({ error: 'Failed to reset database' });
-    }
+    const response = await supabaseRequest('app_data?collection=not.is.null', { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    if (!response.ok) { const body = await response.text(); console.error('Database reset failed:', response.status, body); return res.status(500).json({ error: 'Failed to reset database' }); }
     return res.json({ ok: true, message: 'All application records were cleared.' });
-  } catch (error) {
-    console.error('Database reset error:', error);
-    return res.status(500).json({ error: 'Failed to reset database' });
-  }
+  } catch (error) { console.error('Database reset error:', error); return res.status(500).json({ error: 'Failed to reset database' }); }
 });
 
 app.post('/api/student/register', async (req, res) => {
@@ -107,8 +95,7 @@ app.post('/api/student/activate', async (req, res) => {
     const session = { id: sessionToken, sessionTokenHash: hashToken(sessionToken), studentId, tabletId: assignedTabletId, studentName, startedAt, returnedAt: null, durationMinutes: null, status: 'active' };
     const insertResponse = await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection: 'studentSessions', id: sessionToken, data: session }) });
     if (!insertResponse.ok) throw new Error(`Session insert returned ${insertResponse.status}`);
-    const attendanceId = randomUUID();
-    const attendanceRecord = { id: attendanceId, sessionId: sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, returnedAt: null, durationMinutes: null, status: 'IN', date: startedAt.slice(0, 10) };
+    const attendanceId = randomUUID(); const attendanceRecord = { id: attendanceId, sessionId: sessionToken, studentId, studentName, tabletId: assignedTabletId, startedAt, returnedAt: null, durationMinutes: null, status: 'IN', date: startedAt.slice(0, 10) };
     const attendanceResponse = await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection: 'attendance', id: attendanceId, data: attendanceRecord }) });
     if (!attendanceResponse.ok) { const body = await attendanceResponse.text().catch(() => ''); console.error('Attendance check-in insert failed:', attendanceResponse.status, body); return res.status(500).json({ error: 'Student session started but attendance check-in could not be saved.' }); }
     const logId = randomUUID(); await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection: 'auditLogs', id: logId, data: { id: logId, action: 'STUDENT_CHECK_IN', studentId, tabletId: assignedTabletId, sessionId: sessionToken, timestamp: startedAt } }) });
@@ -126,150 +113,47 @@ app.delete('/api/student/:studentId', requireAdminSession({ supabaseUrl, supabas
   if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
   const studentId = String(req.params.studentId ?? '').trim();
   if (!studentId) return res.status(400).json({ error: 'Student ID is required' });
-
   try {
-    const students = await readCollectionServerSide('students');
-    const student = students.find((item) => valueMatches(item?.id ?? item?.studentId ?? item?.studentID, studentId));
-    if (!student) return res.status(404).json({ error: 'Student not found' });
-
-    // Soft delete keeps historical tablet movements and attendance intact while
-    // immediately removing the student from all active application screens.
+    const students = await readCollectionServerSide('students'); const student = students.find((item) => valueMatches(item?.id ?? item?.studentId ?? item?.studentID, studentId)); if (!student) return res.status(404).json({ error: 'Student not found' });
     const now = new Date().toISOString();
-    const deletedStudent = {
-      ...student,
-      isDeleted: true,
-      isActive: false,
-      status: 'Inactive',
-      assignedTabletId: null,
-      assignedTabletNumber: null,
-      deletedAt: now,
-      updatedAt: now
-    };
-
-    const studentResponse = await supabaseRequest(
-      `app_data?collection=eq.students&id=eq.${encodeURIComponent(String(student.id ?? studentId))}`,
-      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
-    );
+    const studentResponse = await supabaseRequest(`app_data?collection=eq.students&id=eq.${encodeURIComponent(String(student.id ?? studentId))}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     if (!studentResponse.ok) throw new Error(`Student delete returned ${studentResponse.status}`);
-
-    // Close active assignments for this student so the tablet is not left assigned.
     const assignments = await readCollectionServerSide('assignments');
     for (const assignment of assignments.filter((item) => valueMatches(item?.studentId, studentId) && String(item?.status ?? '').toLowerCase() !== 'returned')) {
-      const assignmentId = String(assignment?.id ?? '').trim();
-      if (!assignmentId) continue;
+      const assignmentId = String(assignment?.id ?? '').trim(); if (!assignmentId) continue;
       const updatedAssignment = { ...assignment, status: 'Returned', returnedAt: now, updatedAt: now };
-      const response = await supabaseRequest(
-        `app_data?collection=eq.assignments&id=eq.${encodeURIComponent(assignmentId)}`,
-        { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: updatedAssignment, updated_at: now }) }
-      );
+      const response = await supabaseRequest(`app_data?collection=eq.assignments&id=eq.${encodeURIComponent(assignmentId)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: updatedAssignment, updated_at: now }) });
       if (!response.ok) throw new Error(`Assignment cleanup returned ${response.status}`);
     }
-
-    const tombstoneId = randomUUID();
-    const tombstoneResponse = await supabaseRequest('app_data', {
-      method: 'POST',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        collection: 'auditLogs',
-        id: tombstoneId,
-        data: { id: tombstoneId, action: 'STUDENT_DELETED', studentId, timestamp: now }
-      })
-    });
+    const tombstoneId = randomUUID(); const tombstoneResponse = await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection: 'auditLogs', id: tombstoneId, data: { id: tombstoneId, action: 'STUDENT_DELETED', studentId, timestamp: now } }) });
     if (!tombstoneResponse.ok) throw new Error(`Student delete audit returned ${tombstoneResponse.status}`);
-
     return res.json({ ok: true, message: 'Student deleted successfully.' });
-  } catch (error) {
-    console.error('Student delete failed:', error);
-    return res.status(500).json({ error: 'Student could not be deleted.' });
-  }
+  } catch (error) { console.error('Student delete failed:', error); return res.status(500).json({ error: 'Student could not be deleted.' }); }
 });
 
 app.delete('/api/db/:collection/:id', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => {
   const { collection, id } = req.params;
   if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' });
-  const recordId = String(id ?? '').trim();
-  if (!recordId) return res.status(400).json({ error: 'Record ID is required' });
-  if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
-
-  try {
-    const response = await supabaseRequest(
-      `app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(recordId)}`,
-      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
-    );
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      console.error(`Failed to delete ${collection}/${recordId}:`, response.status, body);
-      return res.status(500).json({ error: 'Failed to delete record' });
-    }
-    return res.json({ ok: true });
-  } catch (error) {
-    console.error(`Delete failed for ${collection}/${recordId}:`, error);
-    return res.status(500).json({ error: 'Failed to delete record' });
-  }
+  const recordId = String(id ?? '').trim(); if (!recordId) return res.status(400).json({ error: 'Record ID is required' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' });
+  try { const response = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(recordId)}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }); if (!response.ok) { const body = await response.text().catch(() => ''); console.error(`Failed to delete ${collection}/${recordId}:`, response.status, body); return res.status(500).json({ error: 'Failed to delete record' }); } return res.json({ ok: true }); } catch (error) { console.error(`Delete failed for ${collection}/${recordId}:`, error); return res.status(500).json({ error: 'Failed to delete record' }); }
 });
 
 app.get('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); try { return res.json(await readCollectionServerSide(collection)); } catch (error) { console.error(`Failed to read ${collection}:`, error); return res.status(500).json({ error: 'Failed to read data' }); } });
 app.put('/api/db/:collection', requireAdminSession({ supabaseUrl, supabaseKey }), async (req, res) => { const { collection } = req.params; if (!COLLECTIONS.has(collection)) return res.status(400).json({ error: 'Invalid collection' }); if (!databaseConfigured()) return res.status(503).json({ error: 'Supabase is not configured' }); const items = req.body; if (!Array.isArray(items)) return res.status(400).json({ error: 'Request body must be an array' }); try {
-  // True UPSERT: older code only PATCHed rows, so newly created assignments
-  // could disappear after the next refresh because no database row existed.
-  // A full collection PUT must also remove rows that are no longer present.
-  // Without this reconciliation, deleted students reappear on the next polling refresh.
   if (collection === 'students') {
     const auditLogs = await readCollectionServerSide('auditLogs');
-    const deletedStudentIds = new Set(
-      auditLogs
-        .filter((log: any) => String(log?.action ?? '') === 'STUDENT_DELETED')
-        .map((log: any) => String(log?.studentId ?? '').trim())
-        .filter(Boolean)
-    );
-    // Ignore stale browser saves that try to resurrect a student already deleted.
-    const safeItems = items.filter((item: any) => !deletedStudentIds.has(String(item?.id ?? '').trim()));
-    items.length = 0;
-    items.push(...safeItems);
-
+    const deletedStudentIds = new Set(auditLogs.filter((log: any) => String(log?.action ?? '') === 'STUDENT_DELETED').map((log: any) => String(log?.studentId ?? '').trim()).filter(Boolean));
+    const safeItems = items.filter((item: any) => !deletedStudentIds.has(String(item?.id ?? '').trim())); items.length = 0; items.push(...safeItems);
     const incomingIds = new Set(items.map((item: any) => String(item?.id ?? '').trim()).filter(Boolean));
     const existingStudents = await readCollectionServerSide('students');
-    for (const existing of existingStudents) {
-      const existingId = String(existing?.id ?? '').trim();
-      if (!existingId || incomingIds.has(existingId)) continue;
-      const deleteResponse = await supabaseRequest(
-        `app_data?collection=eq.students&id=eq.${encodeURIComponent(existingId)}`,
-        { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
-      );
-      if (!deleteResponse.ok) throw new Error(`Supabase student delete returned ${deleteResponse.status}`);
-    }
+    for (const existing of existingStudents) { const existingId = String(existing?.id ?? '').trim(); if (!existingId || incomingIds.has(existingId)) continue; const deleteResponse = await supabaseRequest(`app_data?collection=eq.students&id=eq.${encodeURIComponent(existingId)}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }); if (!deleteResponse.ok) throw new Error(`Supabase student delete returned ${deleteResponse.status}`); }
   }
-
   for (const item of items) {
-    const id = String(item?.id ?? '').trim();
-    if (!id) continue;
-
-    const existingResponse = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}&select=id&limit=1`);
-    if (!existingResponse.ok) {
-      const body = await existingResponse.text();
-      console.error(`Supabase ${collection} lookup failed:`, existingResponse.status, body);
-      throw new Error(`Supabase returned ${existingResponse.status}`);
-    }
-    const existingRows = await existingResponse.json();
-    const now = new Date().toISOString();
-
-    const response = Array.isArray(existingRows) && existingRows.length > 0
-      ? await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify({ data: item, updated_at: now })
-        })
-      : await supabaseRequest('app_data', {
-          method: 'POST',
-          headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify({ collection, id, data: item, updated_at: now })
-        });
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.error(`Supabase ${collection} save failed:`, response.status, body);
-      throw new Error(`Supabase returned ${response.status}`);
-    }
+    const id = String(item?.id ?? '').trim(); if (!id) continue;
+    const existingResponse = await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}&select=id&limit=1`); if (!existingResponse.ok) { const body = await existingResponse.text(); console.error(`Supabase ${collection} lookup failed:`, existingResponse.status, body); throw new Error(`Supabase returned ${existingResponse.status}`); }
+    const existingRows = await existingResponse.json(); const now = new Date().toISOString();
+    const response = Array.isArray(existingRows) && existingRows.length > 0 ? await supabaseRequest(`app_data?collection=eq.${encodeURIComponent(collection)}&id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ data: item, updated_at: now }) }) : await supabaseRequest('app_data', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ collection, id, data: item, updated_at: now }) });
+    if (!response.ok) { const body = await response.text(); console.error(`Supabase ${collection} save failed:`, response.status, body); throw new Error(`Supabase returned ${response.status}`); }
   }
   return res.json({ ok: true });
 } catch (error) { console.error(`Failed to update ${collection}:`, error); return res.status(500).json({ error: 'Failed to update data' }); } });
